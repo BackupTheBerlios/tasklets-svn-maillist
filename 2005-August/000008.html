@@ -1,0 +1,211 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/softlets (timethread.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-August/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28timethread.py%29&In-Reply-To=%3C200508210009.j7L09H9p009929%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000007.html">
+   <LINK REL="Next"  HREF="000009.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/softlets (timethread.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28timethread.py%29&In-Reply-To=%3C200508210009.j7L09H9p009929%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/softlets (timethread.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Aug 21 02:09:17 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000007.html">[softlets-svn] trunk (4 files)
+</A></li>
+        <LI>Next message: <A HREF="000009.html">[softlets-svn] trunk/softlets (timethread.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8">[ date ]</a>
+              <a href="thread.html#8">[ thread ]</a>
+              <a href="subject.html#8">[ subject ]</a>
+              <a href="author.html#8">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, August 21, 2005 @ 02:09:07
+  Author: antoine
+Revision: 23
+
+forgot to add one file
+
+Added:
+  trunk/softlets/timethread.py
+
+Added: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-08-20 23:57:18 UTC (rev 22)
++++ trunk/softlets/timethread.py	2005-08-21 00:09:07 UTC (rev 23)
+@@ -0,0 +1,135 @@
++&quot;&quot;&quot;
++TimeThread is a helper thread to handle lots of timers
++without any scalability problem.
++(in contrast, the Timer class in the builtin threading package
++allocates a separate thread for each timer)
++&quot;&quot;&quot;
++
++import time
++import threading
++from heapq import heappush, heappop, heapify
++from operator import itemgetter
++
++from softlets.core import _singleton
++
++__all__ = ['TimeThread']
++
++
++def _p(s):
++    def p():
++        print s
++    return p
++
++def _q(s):
++    def q():
++        if not s % 100:
++            print s
++    return q
++
++def NamedTuple(*names):
++    d = dict([(name, index) for index, name in enumerate(names)])
++    n = len(names)
++    class T(tuple):
++        def __new__(cls, *args, **kargs):
++            p = len(args)
++            assert p + len(kargs) == n
++            l = list(args) + [None] * (n - p)
++            for k, v in kargs.items():
++                i = d[k]
++                assert i &gt;= p
++                l[i] = v
++            return tuple.__new__(cls, l)
++    for k, v in d.items():
++        setattr(T, k, property(itemgetter(v)))
++    return T
++
++_Callback = NamedTuple(&quot;timestamp&quot;, &quot;func&quot;)
++
++
++class _TimeThread(threading.Thread):
++    def __init__(self):
++        threading.Thread.__init__(self)
++        self.callbacks = []
++        self.interrupt = threading.Condition()
++        self.started = False
++        self.running = False
++        self.setDaemon(True)
++
++    def start(self):
++        if not self.started:
++            threading.Thread.start(self)
++            self.started = True
++
++    def get_lock(self):
++        return self.interrupt
++
++    def add_timer(self, delay, func, keep_lock=False):
++        timestamp = time.time() + delay
++        callback = _Callback(timestamp, func)
++        if not keep_lock:
++            # If not asked otherwise, release the lock
++            # in case the func() wants to add/remove other callbacks
++            def f():
++                self.interrupt.release()
++                try:
++                    func()
++                finally:
++                    self.interrupt.acquire()
++            func = f
++        try:
++            self.interrupt.acquire()
++            heappush(self.callbacks, callback)
++            if self.callbacks[0] is callback:
++                self.interrupt.notify()
++        finally:
++            self.interrupt.release()
++        return callback
++
++    def remove_timer(self, callback):
++        try:
++            self.interrupt.acquire()
++            try:
++                if self.callbacks[0] is callback:
++                    self.interrupt.notify()
++                self.callbacks.remove(callback)
++            except (ValueError, IndexError):
++                raise
++                raise ValueError(&quot;cannot remove unknown timer '%s'&quot; % str(callback))
++            heapify(self.callbacks)
++        finally:
++            self.interrupt.release()
++
++    def finish(self):
++        self.running = False
++        self.interrupt.acquire()
++        self.interrupt.notify()
++        self.interrupt.release()
++
++    def run(self):
++        self.running = True
++        try:
++            self.interrupt.acquire()
++            while self.running:
++                if not self.callbacks:
++                    self.interrupt.wait()
++                    continue
++                cb = self.callbacks[0]
++                timeout = cb.timestamp - time.time()
++                if timeout &gt; 0:
++                    r = self.interrupt.wait(timeout)
++                    # If the next callback has changed at return, it means we
++                    # have been interrupted by the main thread
++                    if not self.callbacks or cb is not self.callbacks[0]:
++                        continue
++                heappop(self.callbacks)
++                # Release the lock in case the func() wants to
++                # add/remove other callbacks
++#                 self.interrupt.release()
++                cb.func()
++#                 self.interrupt.acquire()
++        finally:
++            self.interrupt.release()
++
++
++TimeThread = _singleton(_TimeThread)
++
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000007.html">[softlets-svn] trunk (4 files)
+</A></li>
+	<LI>Next message: <A HREF="000009.html">[softlets-svn] trunk/softlets (timethread.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8">[ date ]</a>
+              <a href="thread.html#8">[ thread ]</a>
+              <a href="subject.html#8">[ subject ]</a>
+              <a href="author.html#8">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

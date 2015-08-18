@@ -1,0 +1,2320 @@
+From tasklets-svn at berlios.de  Sun Oct  2 16:51:38 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 16:51:38 +0200
+Subject: [softlets-svn] trunk (8 files)
+Message-ID: <200510021451.j92EpcLC010996@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 16:51:37
+  Author: antoine
+Revision: 35
+
+reorganize core in subdirectory (clearer)
+
+Added:
+  trunk/softlets/core/
+  trunk/softlets/core/__init__.py
+  trunk/softlets/core/common.py
+  trunk/softlets/core/switcher.py
+    (from rev 34, trunk/softlets/core.py)
+  trunk/softlets/core/waitobject.py
+Modified:
+  trunk/softlets/timethread.py
+Deleted:
+  trunk/_autopath.py
+  trunk/softlets/core.py
+
+Deleted: trunk/_autopath.py
+===================================================================
+--- trunk/_autopath.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/_autopath.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -1,24 +0,0 @@
+-
+-
+-# Try to autodetect where in the hierarchy a package is.
+-# Useful when running examples in subdirectories without
+-# wanting to install the package in the system dirs.
+-def _autopath(package_name='softlets', path=None):
+-    import os, sys
+-    if path is None:
+-        path = os.path.abspath(__file__)
+-    subdir = os.path.join(path, package_name)
+-    if os.path.isdir(subdir):
+-        sys.path.append(path)
+-        try:
+-            __import__(package_name)
+-            return
+-        except ImportError:
+-            sys.path.remove(path)
+-    # Get parent
+-    parent = os.path.split(path)[0]
+-    if parent == path:
+-        raise ImportError("Could not find package '%s'" % package_name)
+-    _autopath(package_name, parent)
+-
+-_autopath()
+
+Added: trunk/softlets/core/__init__.py
+===================================================================
+--- trunk/softlets/core/__init__.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/softlets/core/__init__.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -0,0 +1,3 @@
++
++from softlets.core.switcher import *
++# from softlets.core.waitobject import *
+
+Added: trunk/softlets/core/common.py
+===================================================================
+--- trunk/softlets/core/common.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/softlets/core/common.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -0,0 +1,58 @@
++"""
++Common base stuff.
++"""
++
++import threading
++
++__all__ = [
++    '_singleton', '_lock', '_protect', '_unprotect',
++    ]
++
++
++def _singleton(cls):
++    instance = []
++    def wrapper(*args, **kargs):
++        if not instance:
++            instance.append(cls(*args, **kargs))
++        return instance[0]
++    return wrapper
++
++# def _local_singleton(cls):
++#     instances = {}
++#     def wrapper(*args, **kargs):
++#         switcher = current_switcher()
++#         try:
++#             instance = instances[switcher]
++#         except KeyError:
++#             instance = cls(*args, **kargs)
++#             instances[switcher] = instance
++#         return instance
++#     return wrapper
++
++#
++# To be used when other threads have to interact with
++# a switcher thread.
++#
++_lock = threading.Lock()
++
++def _protect(func, lock=None):
++    lock = lock or _lock
++    try:
++        func.__unprotected
++    except AttributeError:
++        def wrapper(*args, **kargs):
++            lock.acquire()
++            try:
++                return func(*args, **kargs)
++            finally:
++                lock.release()
++        wrapper.__unprotected = func
++        return wrapper
++    else:
++        return func
++
++def _unprotect(func):
++    try:
++        return func.__unprotected
++    except AttributeError:
++        return func
+
+Copied: trunk/softlets/core/switcher.py (from rev 34, trunk/softlets/core.py)
+===================================================================
+--- trunk/softlets/core.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/softlets/core/switcher.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -0,0 +1,227 @@
++
++import threading
++from thread import get_ident
++
++from common import *
++from waitobject import WaitObject
++
++
++#
++# Ready object
++#
++class _Ready(WaitObject):
++    """
++    The Ready object is always ready.
++    It is used implicitly when a thread is launched,
++    or explicitly when a thread wants to temporarily
++    yield control without actually waiting on anything.
++    """
++    def __init__(self):
++        WaitObject.__init__(self)
++        self.set_ready(True)
++
++# Special-casing Ready improves scalability with many threads
++Ready = _singleton(_Ready)
++
++
++#
++# Softlet object
++#
++
++class Softlet(WaitObject):
++    """
++    A Softlet is an object that represents a cooperative thread.
++    A Softlet is automatically registered to a specific switcher
++    which handles the scheduling of all softlets attached to it.
++    (for now and by default, there is only one switcher)
++    """
++
++    def __init__(self, func=None, standalone=False, daemon=False):
++        """
++        Create Softlet from given generator, or from
++        the overriden run() method if "func" is not specified.
++        If "standalone" is True, Softlet won't be killed
++        when parent terminates.
++        If "daemon" is True, Softlet is automatically killed
++        when no non-daemon Softlets are left.
++        """
++        WaitObject.__init__(self)
++        self.standalone = standalone
++        self.switcher = current_switcher()
++        self.children = set()
++        self.daemon = daemon
++        if not standalone:
++            self.parent = self.switcher.current_thread
++            if self.parent:
++                self.parent.children.add(self)
++        else:
++            self.parent = None
++        self.waiting_on = None
++        self.start(func)
++
++    def start(self, func=None):
++        self.runner = func or self.run()
++        self.finished = False
++        self.set_ready(False)
++        self.switcher.add_thread(self)
++
++    def terminate(self):
++        self.finished = True
++        self.set_ready(True)
++        self.switcher.remove_thread(self)
++        if self.parent:
++            self.parent.children.remove(self)
++        while True:
++            try:
++                child = iter(self.children).next()
++            except StopIteration:
++                break
++            else:
++                child.terminate()
++
++
++#
++# Main loop
++#
++
++# Wicked idea: rewrite the switcher as a generator that yields
++# the next thread to be scheduled.
++# Then, write a metaswitcher that will iterate on the switcher.
++
++class Switcher(object):
++    """
++    The main switching loop. Handles WaitObjects and Softlets.
++    """
++
++    def __init__(self):
++        self.threads = set()
++        self.ready_objects = set()
++        self.nb_switches = 0
++        self.nb_daemons = 0
++        self.current_thread = None
++        # Async signalling (objects waken out of the switcher thread)
++        self.tid = get_ident()
++        self.nb_async_waits = 0
++        self.async_cond = threading.Condition(threading.Lock())
++        self.async_calls = []
++
++    def add_thread(self, thread):
++        # Called in-thread
++        wait_object = Ready()
++        wait_object.add_waiter(thread)
++        thread.waiting_on = wait_object
++        self.threads.add(thread)
++        if thread.daemon:
++            self.nb_daemons += 1
++
++    def remove_thread(self, thread):
++        # Called in-thread
++        self.threads.remove(thread)
++        if thread.daemon:
++            self.nb_daemons -= 1
++
++    def add_async_wait(self, wait_object):
++        # Called in-thread
++        self.nb_async_waits += 1
++
++    def remove_async_wait(self, wait_object):
++        # Called in-thread
++        self.nb_async_waits -= 1
++
++    def set_ready(self, wait_object, ready):
++        # May be called async (out-of-thread)
++        async = (get_ident() != self.tid)
++        if async:
++            def f():
++                self.set_ready(wait_object, ready)
++            self.push_async_call(f)
++            return
++        else:
++            # In-thread
++            if ready:
++                self.ready_objects.add(wait_object)
++            else:
++                self.ready_objects.discard(wait_object)
++
++    def add_ready_object(self, wait_object):
++        # Called in-thread
++        self.ready_objects.add(wait_object)
++
++    def remove_ready_object(self, wait_object):
++        # Called in-thread
++        self.ready_objects.remove(wait_object)
++
++    def push_async_call(self, func):
++        # Called out-of-thread
++        self.async_cond.acquire()
++        self.async_calls.append(func)
++        self.async_cond.notify()
++        self.async_cond.release()
++
++    def run_async_calls(self):
++        # Called in-thread while locked
++        for fun in self.async_calls:
++            fun()
++        del self.async_calls[:]
++
++    def run(self):
++        A, R = (self.async_cond.acquire, self.async_cond.release)
++        while len(self.threads) > self.nb_daemons:
++            # Process pending async calls
++            if self.async_calls:
++                A()
++                self.run_async_calls()
++                R()
++            # This loop is a fake: we always break because
++            # thread calls inside the loop can change the set size
++            for r in self.ready_objects:
++                # Give control to a thread
++                thread = r.get_waiter(self)
++                if thread is None or thread.finished:
++                    break
++                self.nb_switches += 1
++                try:
++                    self.current_thread = thread
++                    wait_object = thread.runner.next()
++                except Exception, e:
++                    self.current_thread = None
++                    thread.terminate()
++                    if not isinstance(e, StopIteration):
++                        raise
++                else:
++                    self.current_thread = None
++                    wait_object.add_waiter(thread)
++                    thread.waiting_on = wait_object
++                break
++            else:
++                # self.ready_objects is empty
++                async = self.nb_async_waits > 0
++                if not async:
++                    raise Exception("softlets starved")
++                A()
++                self.async_cond.wait()
++                self.run_async_calls()
++                R()
++
++#
++# Functions
++#
++
++current_switcher = _singleton(Switcher)
++current_switcher.__doc__ = """
++Returns the switcher currently in use.
++"""
++
++def current_softlet():
++    """
++    Returns the currently running softlet,
++    or None if not called from a softlet.
++    """
++    return current_switcher().current_thread
++
++def main_loop(switcher=None):
++    """
++    Runs the softlets main loop.
++    """
++    switcher = switcher or current_switcher()
++    switcher.run()
+
+Added: trunk/softlets/core/waitobject.py
+===================================================================
+--- trunk/softlets/core/waitobject.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/softlets/core/waitobject.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -0,0 +1,216 @@
++
++from collections import deque
++
++from common import *
++
++
++#
++# Different kinds of objects providing a simple synchronization scheme
++#
++
++class WaitObject(object):
++    """
++    A WaitObject is an object a softlet can wait on by yield'ing it.
++    """
++
++    def __init__(self):
++        # Waiters are keyed by their respective switcher
++        self.waiters = {}
++        self.ready = False
++        self.readiness_callbacks = []
++        self.armed = False
++        self.is_async = False
++
++    def protect(self, lock=None):
++        lock = lock or _lock
++        self.get_waiter = _protect(self.get_waiter, lock)
++        self.add_waiter = _protect(self.add_waiter, lock)
++        self.set_ready = _protect(self.set_ready, lock)
++        self.notify_readiness = _protect(self.notify_readiness, lock)
++
++    def arm(self):
++        """
++        Can be overriden if some specific actions need to
++        be taken the first time the WaitObject is armed
++        (i.e. waited upon).
++        """
++        pass
++
++    def get_waiter(self, switcher):
++        """
++        Get one of the softlets waiting upon this WaitObject,
++        depending on the switcher.
++        """
++        try:
++            q = self.waiters[switcher]
++        except KeyError:
++            return None
++        waiter = q.popleft()
++        if not q:
++            del self.waiters[switcher]
++            switcher.remove_ready_object(self)
++            if self.is_async:
++                switcher.remove_async_wait(self)
++        return waiter
++
++    def add_waiter(self, waiter):
++        """
++        Add a softlet waiting upon this WaitObject.
++        """
++        if not self.armed:
++            self.arm()
++            self.armed = True
++        switcher = waiter.switcher
++        try:
++            self.waiters[switcher].append(waiter)
++        except KeyError:
++            self.waiters[switcher] = deque([waiter])
++            if self.ready:
++                switcher.add_ready_object(self)
++            if self.is_async:
++                switcher.add_async_wait(self)
++
++    def set_ready(self, ready):
++        """
++        Sets whether the WaitObject is ready or not.
++        (i.e. whether a softlet can be waken)
++        """
++        if ready != self.ready:
++            self.ready = ready
++            for callback in self.readiness_callbacks:
++                callback(self, ready)
++            for switcher in self.waiters:
++                switcher.set_ready(self, ready)
++
++    def notify_readiness(self, callback):
++        """
++        Ask to be notified when the WaitObject's readiness changes.
++        The function will be called back with two arguments:
++        the WaitObject, and its ready state (True or False).
++        """
++        self.readiness_callbacks.append(callback)
++        if self.ready:
++            callback(self, True)
++
++    def __or__(self, b):
++        if b is None:
++            return self
++        assert isinstance(b, WaitObject)
++        return LogicalOr([self, b])
++
++    def __ror__(self, b):
++        return self.__or__(b)
++
++    def __and__(self, b):
++        if b is None:
++            return self
++        assert isinstance(b, WaitObject)
++        return LogicalAnd([self, b])
++
++    def __rand__(self, b):
++        return self.__and__(b)
++
++    def __invert__(self):
++        return LogicalNot(self)
++
++
++class LogicalNot(WaitObject):
++    """
++    Logical negation of a WaitObject.
++    This class is invoked with the "~" operator.
++    """
++    def __init__(self, obj):
++        WaitObject.__init__(self)
++        self.obj = obj
++        self.is_async = obj.is_async
++        self.set_ready(not obj.ready)
++
++    def arm(self):
++        self.obj.notify_readiness(self.on_object_ready)
++
++    def on_object_ready(self, obj, ready):
++        self.set_ready(not ready)
++
++    def __invert__(self):
++        return self.obj
++
++
++class MultipleWaitObject(WaitObject):
++    """
++    Base class for combinations of several WaitObjects.
++    """
++    def __init__(self, objs):
++        WaitObject.__init__(self)
++        self.objs = list(objs)
++        self.ready_objs = set()
++
++    def arm(self):
++        for obj in self.objs:
++            self.is_async |= obj.is_async
++            obj.notify_readiness(self.on_object_ready)
++
++    def on_object_ready(self, obj, ready):
++        if ready:
++            self.ready_objs.add(obj)
++        else:
++            self.ready_objs.discard(obj)
++        self.update_readiness()
++
++    def get(self):
++        try:
++            return iter(self.ready_objs).next()
++        except StopIteration:
++            return None
++
++    def objects(self):
++        while True:
++            try:
++                obj = iter(self.ready_objs).next()
++            except StopIteration:
++                break
++            else:
++                yield obj
++
++
++class LogicalOr(MultipleWaitObject):
++    """
++    Logical OR between several WaitObjects.
++    The natural way to construct it is to use the "|" operator
++    between those objects.
++    """
++    def update_readiness(self):
++        self.set_ready(len(self.ready_objs) > 0)
++
++    def __or__(self, b):
++        if b is None:
++            return self
++        assert isinstance(b, WaitObject)
++        if isinstance(b, LogicalOr):
++            return LogicalOr(self.objs + b.objs)
++        else:
++            return LogicalOr(self.objs + [b])
++
++    def __ror__(self, b):
++        return self.__or__(b)
++
++class LogicalAnd(MultipleWaitObject):
++    """
++    Logical AND between several WaitObjects.
++    The natural way to construct it is to use the "&" operator
++    between those objects.
++    """
++    def update_readiness(self):
++        self.set_ready(len(self.ready_objs) == len(self.objs))
++
++    def __and__(self, b):
++        if b is None:
++            return self
++        assert isinstance(b, WaitObject)
++        if isinstance(b, LogicalAnd):
++            return LogicalAnd(self.objs + b.objs)
++        else:
++            return LogicalAnd(self.objs + [b])
++
++    def __rand__(self, b):
++        return self.__and__(b)
++
+
+Deleted: trunk/softlets/core.py
+===================================================================
+--- trunk/softlets/core.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/softlets/core.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -1,475 +0,0 @@
+-
+-from collections import deque
+-import threading
+-from thread import get_ident
+-
+-def _singleton(cls):
+-    instance = []
+-    def wrapper(*args, **kargs):
+-        if not instance:
+-            instance.append(cls(*args, **kargs))
+-        return instance[0]
+-    return wrapper
+-
+-def _local_singleton(cls):
+-    instances = {}
+-    def wrapper(*args, **kargs):
+-        switcher = current_switcher()
+-        try:
+-            instance = instances[switcher]
+-        except KeyError:
+-            instance = cls(*args, **kargs)
+-            instances[switcher] = instance
+-        return instance
+-    return wrapper
+-
+-#
+-# To be used when other threads have to interact with
+-# a switcher thread.
+-#
+-_lock = threading.Lock()
+-
+-def _protect(func, lock=None):
+-    lock = lock or _lock
+-    try:
+-        func.__unprotected
+-    except AttributeError:
+-        def wrapper(*args, **kargs):
+-            lock.acquire()
+-            try:
+-                return func(*args, **kargs)
+-            finally:
+-                lock.release()
+-        wrapper.__unprotected = func
+-        return wrapper
+-    else:
+-        return func
+-
+-def _unprotect(func):
+-    try:
+-        return func.__unprotected
+-    except AttributeError:
+-        return func
+-
+-
+-#
+-# Different kinds of objects providing a simple synchronization scheme
+-#
+-
+-class WaitObject(object):
+-    """
+-    A WaitObject is an object a softlet can wait on by yield'ing it.
+-    """
+-
+-    def __init__(self):
+-        # Waiters are keyed by their respective switcher
+-        self.waiters = {}
+-        self.ready = False
+-        self.readiness_callbacks = []
+-        self.armed = False
+-        self.is_async = False
+-
+-    def protect(self, lock=None):
+-        lock = lock or _lock
+-        self.get_waiter = _protect(self.get_waiter, lock)
+-        self.add_waiter = _protect(self.add_waiter, lock)
+-        self.set_ready = _protect(self.set_ready, lock)
+-        self.notify_readiness = _protect(self.notify_readiness, lock)
+-
+-    def arm(self):
+-        """
+-        Can be overriden if some specific actions need to
+-        be taken the first time the WaitObject is armed
+-        (i.e. waited upon).
+-        """
+-        pass
+-
+-    def get_waiter(self, switcher):
+-        """
+-        Get one of the softlets waiting upon this WaitObject,
+-        depending on the switcher.
+-        """
+-        try:
+-            q = self.waiters[switcher]
+-        except KeyError:
+-            return None
+-        waiter = q.popleft()
+-        if not q:
+-            del self.waiters[switcher]
+-            switcher.remove_ready_object(self)
+-            if self.is_async:
+-                switcher.remove_async_wait(self)
+-        return waiter
+-
+-    def add_waiter(self, waiter):
+-        """
+-        Add a softlet waiting upon this WaitObject.
+-        """
+-        if not self.armed:
+-            self.arm()
+-            self.armed = True
+-        switcher = waiter.switcher
+-        try:
+-            self.waiters[switcher].append(waiter)
+-        except KeyError:
+-            self.waiters[switcher] = deque([waiter])
+-            if self.ready:
+-                switcher.add_ready_object(self)
+-            if self.is_async:
+-                switcher.add_async_wait(self)
+-
+-    def set_ready(self, ready):
+-        """
+-        Sets whether the WaitObject is ready or not.
+-        (i.e. whether a softlet can be waken)
+-        """
+-        if ready != self.ready:
+-            self.ready = ready
+-            for callback in self.readiness_callbacks:
+-                callback(self, ready)
+-            for switcher in self.waiters:
+-                switcher.set_ready(self, ready)
+-
+-    def notify_readiness(self, callback):
+-        """
+-        Ask to be notified when the WaitObject's readiness changes.
+-        The function will be called back with two arguments:
+-        the WaitObject, and its ready state (True or False).
+-        """
+-        self.readiness_callbacks.append(callback)
+-        if self.ready:
+-            callback(self, True)
+-
+-    def __or__(self, b):
+-        if b is None:
+-            return self
+-        assert isinstance(b, WaitObject)
+-        return LogicalOr([self, b])
+-
+-    def __ror__(self, b):
+-        return self.__or__(b)
+-
+-    def __and__(self, b):
+-        if b is None:
+-            return self
+-        assert isinstance(b, WaitObject)
+-        return LogicalAnd([self, b])
+-
+-    def __rand__(self, b):
+-        return self.__and__(b)
+-
+-    def __invert__(self):
+-        return LogicalNot(self)
+-
+-
+-class _Ready(WaitObject):
+-    def __init__(self):
+-        WaitObject.__init__(self)
+-        self.set_ready(True)
+-
+-# Special-casing Ready improves scalability with many threads
+-Ready = _singleton(_Ready)
+-
+-
+-class LogicalNot(WaitObject):
+-    """
+-    Logical negation of a WaitObject.
+-    This class is invoked with the "~" operator.
+-    """
+-    def __init__(self, obj):
+-        WaitObject.__init__(self)
+-        self.obj = obj
+-        self.is_async = obj.is_async
+-        self.set_ready(not obj.ready)
+-
+-    def arm(self):
+-        self.obj.notify_readiness(self.on_object_ready)
+-
+-    def on_object_ready(self, obj, ready):
+-        self.set_ready(not ready)
+-
+-    def __invert__(self):
+-        return self.obj
+-
+-
+-class MultipleWaitObject(WaitObject):
+-    """
+-    Base class for combinations of several WaitObjects.
+-    """
+-    def __init__(self, objs):
+-        WaitObject.__init__(self)
+-        self.objs = list(objs)
+-        self.ready_objs = set()
+-
+-    def arm(self):
+-        for obj in self.objs:
+-            self.is_async |= obj.is_async
+-            obj.notify_readiness(self.on_object_ready)
+-
+-    def on_object_ready(self, obj, ready):
+-        if ready:
+-            self.ready_objs.add(obj)
+-        else:
+-            self.ready_objs.discard(obj)
+-        self.update_readiness()
+-
+-    def get(self):
+-        try:
+-            return iter(self.ready_objs).next()
+-        except StopIteration:
+-            return None
+-
+-    def objects(self):
+-        while True:
+-            try:
+-                obj = iter(self.ready_objs).next()
+-            except StopIteration:
+-                break
+-            else:
+-                yield obj
+-
+-
+-class LogicalOr(MultipleWaitObject):
+-    """
+-    Logical OR between several WaitObjects.
+-    The natural way to construct it is to use the "|" operator
+-    between those objects.
+-    """
+-    def update_readiness(self):
+-        self.set_ready(len(self.ready_objs) > 0)
+-
+-    def __or__(self, b):
+-        if b is None:
+-            return self
+-        assert isinstance(b, WaitObject)
+-        if isinstance(b, LogicalOr):
+-            return LogicalOr(self.objs + b.objs)
+-        else:
+-            return LogicalOr(self.objs + [b])
+-
+-    def __ror__(self, b):
+-        return self.__or__(b)
+-
+-class LogicalAnd(MultipleWaitObject):
+-    """
+-    Logical OR between several WaitObjects.
+-    The natural way to construct it is to use the "&" operator
+-    between those objects.
+-    """
+-    def update_readiness(self):
+-        self.set_ready(len(self.ready_objs) == len(self.objs))
+-
+-    def __and__(self, b):
+-        if b is None:
+-            return self
+-        assert isinstance(b, WaitObject)
+-        if isinstance(b, LogicalAnd):
+-            return LogicalAnd(self.objs + b.objs)
+-        else:
+-            return LogicalAnd(self.objs + [b])
+-
+-    def __rand__(self, b):
+-        return self.__and__(b)
+-
+-
+-#
+-# Softlet object
+-#
+-
+-class Softlet(WaitObject):
+-    """
+-    A Softlet is an object that represents a cooperative thread.
+-    A Softlet is automatically registered to a specific switcher
+-    which handles the scheduling of all softlets attached to it.
+-    (for now and by default, there is only one switcher)
+-    """
+-
+-    def __init__(self, func=None, standalone=False, daemon=False):
+-        """
+-        Create Softlet from given generator, or from
+-        the overriden run() method if "func" is not specified.
+-        If "standalone" is True, Softlet won't be killed
+-        when parent terminates.
+-        If "daemon" is True, Softlet is automatically killed
+-        when no non-daemon Softlets are left.
+-        """
+-        WaitObject.__init__(self)
+-        self.standalone = standalone
+-        self.switcher = current_switcher()
+-        self.children = set()
+-        self.daemon = daemon
+-        if not standalone:
+-            self.parent = self.switcher.current_thread
+-            if self.parent:
+-                self.parent.children.add(self)
+-        else:
+-            self.parent = None
+-        self.waiting_on = None
+-        self.start(func)
+-
+-    def start(self, func=None):
+-        self.runner = func or self.run()
+-        self.finished = False
+-        self.set_ready(False)
+-        self.switcher.add_thread(self)
+-
+-    def terminate(self):
+-        self.finished = True
+-        self.set_ready(True)
+-        self.switcher.remove_thread(self)
+-        if self.parent:
+-            self.parent.children.remove(self)
+-        while True:
+-            try:
+-                child = iter(self.children).next()
+-            except StopIteration:
+-                break
+-            else:
+-                child.terminate()
+-
+-
+-#
+-# Main loop
+-#
+-
+-# Wicked idea: rewrite the switcher as a generator that yields
+-# the next thread to be scheduled.
+-# Then, write a metaswitcher that will iterate on the switcher.
+-
+-class Switcher(object):
+-    """
+-    The main switching loop. Handles WaitObjects and Softlets.
+-    """
+-
+-    def __init__(self):
+-        self.threads = set()
+-        self.ready_objects = set()
+-        self.nb_switches = 0
+-        self.nb_daemons = 0
+-        self.current_thread = None
+-        # Async signalling (objects waken out of the switcher thread)
+-        self.tid = get_ident()
+-        self.nb_async_waits = 0
+-        self.async_cond = threading.Condition(threading.Lock())
+-        self.async_calls = []
+-
+-    def add_thread(self, thread):
+-        # Called in-thread
+-        wait_object = Ready()
+-        wait_object.add_waiter(thread)
+-        thread.waiting_on = wait_object
+-        self.threads.add(thread)
+-        if thread.daemon:
+-            self.nb_daemons += 1
+-
+-    def remove_thread(self, thread):
+-        # Called in-thread
+-        self.threads.remove(thread)
+-        if thread.daemon:
+-            self.nb_daemons -= 1
+-
+-    def add_async_wait(self, wait_object):
+-        # Called in-thread
+-        self.nb_async_waits += 1
+-
+-    def remove_async_wait(self, wait_object):
+-        # Called in-thread
+-        self.nb_async_waits -= 1
+-
+-    def set_ready(self, wait_object, ready):
+-        # May be called async (out-of-thread)
+-        async = (get_ident() != self.tid)
+-        if async:
+-            def f():
+-                self.set_ready(wait_object, ready)
+-            self.push_async_call(f)
+-            return
+-        else:
+-            # In-thread
+-            if ready:
+-                self.ready_objects.add(wait_object)
+-            else:
+-                self.ready_objects.discard(wait_object)
+-
+-    def add_ready_object(self, wait_object):
+-        # Called in-thread
+-        self.ready_objects.add(wait_object)
+-
+-    def remove_ready_object(self, wait_object):
+-        # Called in-thread
+-        self.ready_objects.remove(wait_object)
+-
+-    def push_async_call(self, func):
+-        # Called out-of-thread
+-        self.async_cond.acquire()
+-        self.async_calls.append(func)
+-        self.async_cond.notify()
+-        self.async_cond.release()
+-
+-    def run_async_calls(self):
+-        # Called in-thread while locked
+-        for fun in self.async_calls:
+-            fun()
+-        del self.async_calls[:]
+-
+-    def run(self):
+-        A, R = (self.async_cond.acquire, self.async_cond.release)
+-        while len(self.threads) > self.nb_daemons:
+-            # Process pending async calls
+-            if self.async_calls:
+-                A()
+-                self.run_async_calls()
+-                R()
+-            # This loop is a fake: we always break because
+-            # thread calls inside the loop can change the set size
+-            for r in self.ready_objects:
+-                # Give control to a thread
+-                thread = r.get_waiter(self)
+-                if thread is None or thread.finished:
+-                    break
+-                self.nb_switches += 1
+-                try:
+-                    self.current_thread = thread
+-                    wait_object = thread.runner.next()
+-                except Exception, e:
+-                    self.current_thread = None
+-                    thread.terminate()
+-                    if not isinstance(e, StopIteration):
+-                        raise
+-                else:
+-                    self.current_thread = None
+-                    wait_object.add_waiter(thread)
+-                    thread.waiting_on = wait_object
+-                break
+-            else:
+-                # self.ready_objects is empty
+-                async = self.nb_async_waits > 0
+-                if not async:
+-                    raise Exception("softlets starved")
+-                A()
+-                self.async_cond.wait()
+-                self.run_async_calls()
+-                R()
+-
+-#
+-# Functions
+-#
+-
+-current_switcher = _singleton(Switcher)
+-current_switcher.__doc__ = """
+-Returns the switcher currently in use.
+-"""
+-
+-def current_softlet():
+-    """
+-    Returns the currently running softlet,
+-    or None if not called from a softlet.
+-    """
+-    return current_switcher().current_thread
+-
+-def main_loop(switcher=None):
+-    """
+-    Runs the softlets main loop.
+-    """
+-    switcher = switcher or current_switcher()
+-    switcher.run()
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-09-06 22:54:24 UTC (rev 34)
++++ trunk/softlets/timethread.py	2005-10-02 14:51:37 UTC (rev 35)
+@@ -11,7 +11,7 @@
+ from heapq import heappush, heappop, heapify
+ from operator import itemgetter
+ 
+-from softlets.core import _singleton
++from softlets.core.common import _singleton
+ 
+ __all__ = ['TimeThread']
+ 
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 17:15:53 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 17:15:53 +0200
+Subject: [softlets-svn] trunk (5 files)
+Message-ID: <200510021515.j92FFrAl012842@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 17:15:52
+  Author: antoine
+Revision: 36
+
+split modules
+
+Added:
+  trunk/softlets/util/
+  trunk/softlets/util/__init__.py
+  trunk/softlets/util/namedtuple.py
+Modified:
+  trunk/examples/_autopath.py
+  trunk/softlets/timethread.py
+
+Modified: trunk/examples/_autopath.py
+===================================================================
+--- trunk/examples/_autopath.py	2005-10-02 14:51:37 UTC (rev 35)
++++ trunk/examples/_autopath.py	2005-10-02 15:15:52 UTC (rev 36)
+@@ -8,17 +8,18 @@
+     if path is None:
+         path = os.path.abspath(__file__)
+     subdir = os.path.join(path, package_name)
++    exc = None
+     if os.path.isdir(subdir):
+         sys.path.append(path)
+         try:
+             __import__(package_name)
+             return
+-        except ImportError:
++        except ImportError, exc:
+             sys.path.remove(path)
+     # Get parent
+     parent = os.path.split(path)[0]
+     if parent == path:
+-        raise ImportError("Could not find package '%s'" % package_name)
++        raise ImportError("Could not find package '%s':\n%s" % (package_name, exc))
+     _autopath(package_name, parent)
+ 
+ _autopath()
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-10-02 14:51:37 UTC (rev 35)
++++ trunk/softlets/timethread.py	2005-10-02 15:15:52 UTC (rev 36)
+@@ -9,9 +9,9 @@
+ import threading
+ import atexit
+ from heapq import heappush, heappop, heapify
+-from operator import itemgetter
+ 
+ from softlets.core.common import _singleton
++from softlets.util.namedtuple import NamedTuple
+ 
+ __all__ = ['TimeThread']
+ 
+@@ -27,23 +27,6 @@
+             print s
+     return q
+ 
+-def NamedTuple(*names):
+-    d = dict([(name, index) for index, name in enumerate(names)])
+-    n = len(names)
+-    class T(tuple):
+-        def __new__(cls, *args, **kargs):
+-            p = len(args)
+-            assert p + len(kargs) == n
+-            l = list(args) + [None] * (n - p)
+-            for k, v in kargs.items():
+-                i = d[k]
+-                assert i >= p
+-                l[i] = v
+-            return tuple.__new__(cls, l)
+-    for k, v in d.items():
+-        setattr(T, k, property(itemgetter(v)))
+-    return T
+-
+ _Callback = NamedTuple("timestamp", "func")
+ 
+ 
+
+Added: trunk/softlets/util/__init__.py
+===================================================================
+
+Added: trunk/softlets/util/namedtuple.py
+===================================================================
+--- trunk/softlets/util/namedtuple.py	2005-10-02 14:51:37 UTC (rev 35)
++++ trunk/softlets/util/namedtuple.py	2005-10-02 15:15:52 UTC (rev 36)
+@@ -0,0 +1,33 @@
++
++from operator import itemgetter
++
++def NamedTuple(*names):
++    """
++    Create a named tuple class from a list of property names.
++    """
++    d = dict([(name, index) for index, name in enumerate(names)])
++    n = len(names)
++    tdoc = "Automatically generated named tuple.\n"
++    tdoc += "Properties are (in slot order):\n"
++    for name in d:
++        tdoc += "- '%s'\n" % name
++    tdoc += "This class has the natural characteristics of a tuple:\n"
++    tdoc += "light memory usage, builtin comparison, builtin hashing...\n"
++
++    class T(tuple):
++        __doc__ = tdoc
++        def __new__(cls, *args, **kargs):
++            p = len(args)
++            assert p + len(kargs) == n
++            l = list(args) + [None] * (n - p)
++            for k, v in kargs.items():
++                i = d[k]
++                assert i >= p
++                l[i] = v
++            return tuple.__new__(cls, l)
++    for name, index in d.items():
++        setattr(T, name, property(
++            fget=itemgetter(index),
++            doc="Property '%s' (slot #%d of named tuple)" % (name, index),
++            ))
++    return T
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 17:34:21 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 17:34:21 +0200
+Subject: [softlets-svn] trunk/softlets (timer.py)
+Message-ID: <200510021534.j92FYL2h022054@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 17:34:18
+  Author: antoine
+Revision: 37
+
+invisible bug in Timer
+
+Modified:
+  trunk/softlets/timer.py
+
+Modified: trunk/softlets/timer.py
+===================================================================
+--- trunk/softlets/timer.py	2005-10-02 15:15:52 UTC (rev 36)
++++ trunk/softlets/timer.py	2005-10-02 15:34:18 UTC (rev 37)
+@@ -18,9 +18,9 @@
+         self.callback = None
+         self.is_async = True
+         self.protect()
+-        if not self.timethread_started:
+-            self.timethread.start()
+-            self.timethread_started = True
++        if not Timer.timethread_started:
++            Timer.timethread.start()
++            Timer.timethread_started = True
+         self.reschedule()
+ 
+     def reschedule(self):
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 19:25:26 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 19:25:26 +0200
+Subject: [softlets-svn] trunk/softlets (3 files)
+Message-ID: <200510021725.j92HPQX8013163@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 19:25:12
+  Author: antoine
+Revision: 38
+
+bug at shutdown with TimeThread
+
+Modified:
+  trunk/softlets/__init__.py
+  trunk/softlets/core/__init__.py
+  trunk/softlets/timethread.py
+
+Modified: trunk/softlets/__init__.py
+===================================================================
+--- trunk/softlets/__init__.py	2005-10-02 15:34:18 UTC (rev 37)
++++ trunk/softlets/__init__.py	2005-10-02 17:25:12 UTC (rev 38)
+@@ -1,5 +1,7 @@
+ 
+-"""Softlets: a pure Python cooperative multithreading package."""
++"""
++Softlets: a pure Python cooperative multithreading package.
++"""
+ 
+ from softlets.core import *
+ from softlets.queue import *
+
+Modified: trunk/softlets/core/__init__.py
+===================================================================
+--- trunk/softlets/core/__init__.py	2005-10-02 15:34:18 UTC (rev 37)
++++ trunk/softlets/core/__init__.py	2005-10-02 17:25:12 UTC (rev 38)
+@@ -1,3 +1,5 @@
++"""
++Softlets core machinery.
++"""
+ 
+ from softlets.core.switcher import *
+-# from softlets.core.waitobject import *
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-10-02 15:34:18 UTC (rev 37)
++++ trunk/softlets/timethread.py	2005-10-02 17:25:12 UTC (rev 38)
+@@ -35,15 +35,17 @@
+         threading.Thread.__init__(self)
+         self.callbacks = []
+         self.interrupt = threading.Condition()
+-        self.started = False
+         self.running = False
+-        self.setDaemon(True)
+ 
+     def start(self):
+-        if not self.started:
+-            threading.Thread.start(self)
+-            self.started = True
+-            atexit.register(self.finish)
++        assert not self.running, "TimeThread already started"
++        self.thread = threading.Thread(
++            target=self.run,
++            name="TimeThread polling thread")
++        self.thread.setDaemon(True)
++        self.thread.start()
++        self.running = True
++        atexit.register(self.finish)
+ 
+     def get_lock(self):
+         return self.interrupt
+@@ -89,15 +91,15 @@
+         self.callbacks = []
+         self.interrupt.notify()
+         self.interrupt.release()
+-        self.join()
++        self.thread.join()
+ 
+     def run(self):
+-        self.running = True
+         try:
+             self.interrupt.acquire()
+             while self.running:
+                 if not self.callbacks:
+-                    self.interrupt.wait()
++                    if self.running:
++                        self.interrupt.wait()
+                     continue
+                 cb = self.callbacks[0]
+                 timeout = cb.timestamp - time.time()
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 19:29:52 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 19:29:52 +0200
+Subject: [softlets-svn] trunk (examples/popen1.py softlets/popen.py)
+Message-ID: <200510021729.j92HTqOg016637@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 19:29:50
+  Author: antoine
+Revision: 39
+
+new Popen wait object, and example of use
+
+Added:
+  trunk/examples/popen1.py
+  trunk/softlets/popen.py
+
+Added: trunk/examples/popen1.py
+===================================================================
+--- trunk/examples/popen1.py	2005-10-02 17:25:12 UTC (rev 38)
++++ trunk/examples/popen1.py	2005-10-02 17:29:50 UTC (rev 39)
+@@ -0,0 +1,34 @@
++#!/usr/bin/env python
++
++import sys
++import itertools
++import threading
++try:
++    import softlets
++except ImportError:
++    import _autopath, softlets
++
++from softlets.popen import Popen, PIPE
++
++tick = 0.3
++command = ["sleep", "3"]
++clock_symbols = "-/|\\"
++if len(sys.argv) > 1:
++    command = sys.argv[1:]
++
++print "Execute a command in a subprocess and wait for completion"
++
++def main_thread():
++    print "Executing \"%s\" ..." % ' '.join(command)
++    popen = Popen(command, stdout=PIPE, stderr=PIPE)
++    clock = itertools.cycle(clock_symbols)
++    while not popen.finished:
++        print "\r" + clock.next(),
++        sys.stdout.flush()
++        yield popen | softlets.Timer(tick)
++    print "\rResult code =", popen.retcode
++    print "Output:"
++    print popen.popen.communicate()[0]
++
++softlets.Softlet(main_thread())
++softlets.main_loop()
+
+Added: trunk/softlets/popen.py
+===================================================================
+--- trunk/softlets/popen.py	2005-10-02 17:25:12 UTC (rev 38)
++++ trunk/softlets/popen.py	2005-10-02 17:29:50 UTC (rev 39)
+@@ -0,0 +1,31 @@
++
++import subprocess
++from threading import Thread
++
++from softlets.core import WaitObject
++
++
++# For convenience
++from subprocess import *
++__all__ = list(subprocess.__all__)
++
++
++class Popen(WaitObject):
++    def __init__(self, *args, **kargs):
++        WaitObject.__init__(self)
++        self.is_async = True
++        self.protect()
++        self.popen = subprocess.Popen(*args, **kargs)
++        self.finished = False
++        self._thread = Thread(target=self._blocking_wait,
++            name="softlets.popen helper thread")
++        self._thread.setDaemon(True)
++        self._thread.start()
++
++    def _blocking_wait(self):
++        self.retcode = self.popen.wait()
++        self._on_subprocess_exited()
++
++    def _on_subprocess_exited(self):
++        self.finished = True
++        self.set_ready(True)
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 20:23:27 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 20:23:27 +0200
+Subject: [softlets-svn] trunk/softlets (popen.py)
+Message-ID: <200510021823.j92INRwU007718@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 20:23:26
+  Author: antoine
+Revision: 40
+
+comments
+
+Modified:
+  trunk/softlets/popen.py
+
+Modified: trunk/softlets/popen.py
+===================================================================
+--- trunk/softlets/popen.py	2005-10-02 17:29:50 UTC (rev 39)
++++ trunk/softlets/popen.py	2005-10-02 18:23:26 UTC (rev 40)
+@@ -11,6 +11,13 @@
+ 
+ 
+ class Popen(WaitObject):
++    """
++    Executes a command in a subprocess (with the same args as
++    subprocess.Popen), and becomes ready when the subprocess ends.
++    The following properties are defined:
++    - popen: the underlying subprocess.Popen object
++    - retcode: the return code of the subprocess (if finished)
++    """
+     def __init__(self, *args, **kargs):
+         WaitObject.__init__(self)
+         self.is_async = True
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 20:34:33 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 20:34:33 +0200
+Subject: [softlets-svn] trunk/softlets (core/waitobject.py popen.py)
+Message-ID: <200510021834.j92IYXDE008528@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 20:34:33
+  Author: antoine
+Revision: 41
+
+naming, comments
+
+Modified:
+  trunk/softlets/core/waitobject.py
+  trunk/softlets/popen.py
+
+Modified: trunk/softlets/core/waitobject.py
+===================================================================
+--- trunk/softlets/core/waitobject.py	2005-10-02 18:23:26 UTC (rev 40)
++++ trunk/softlets/core/waitobject.py	2005-10-02 18:34:33 UTC (rev 41)
+@@ -15,10 +15,10 @@
+ 
+     def __init__(self):
+         # Waiters are keyed by their respective switcher
+-        self.waiters = {}
++        self._waiters = {}
++        self._readiness_callbacks = []
++        self._armed = False
+         self.ready = False
+-        self.readiness_callbacks = []
+-        self.armed = False
+         self.is_async = False
+ 
+     def protect(self, lock=None):
+@@ -42,12 +42,12 @@
+         depending on the switcher.
+         """
+         try:
+-            q = self.waiters[switcher]
++            q = self._waiters[switcher]
+         except KeyError:
+             return None
+         waiter = q.popleft()
+         if not q:
+-            del self.waiters[switcher]
++            del self._waiters[switcher]
+             switcher.remove_ready_object(self)
+             if self.is_async:
+                 switcher.remove_async_wait(self)
+@@ -57,14 +57,14 @@
+         """
+         Add a softlet waiting upon this WaitObject.
+         """
+-        if not self.armed:
++        if not self._armed:
+             self.arm()
+-            self.armed = True
++            self._armed = True
+         switcher = waiter.switcher
+         try:
+-            self.waiters[switcher].append(waiter)
++            self._waiters[switcher].append(waiter)
+         except KeyError:
+-            self.waiters[switcher] = deque([waiter])
++            self._waiters[switcher] = deque([waiter])
+             if self.ready:
+                 switcher.add_ready_object(self)
+             if self.is_async:
+@@ -77,9 +77,9 @@
+         """
+         if ready != self.ready:
+             self.ready = ready
+-            for callback in self.readiness_callbacks:
++            for callback in self._readiness_callbacks:
+                 callback(self, ready)
+-            for switcher in self.waiters:
++            for switcher in self._waiters:
+                 switcher.set_ready(self, ready)
+ 
+     def notify_readiness(self, callback):
+@@ -88,7 +88,7 @@
+         The function will be called back with two arguments:
+         the WaitObject, and its ready state (True or False).
+         """
+-        self.readiness_callbacks.append(callback)
++        self._readiness_callbacks.append(callback)
+         if self.ready:
+             callback(self, True)
+ 
+
+Modified: trunk/softlets/popen.py
+===================================================================
+--- trunk/softlets/popen.py	2005-10-02 18:23:26 UTC (rev 40)
++++ trunk/softlets/popen.py	2005-10-02 18:34:33 UTC (rev 41)
+@@ -17,6 +17,9 @@
+     The following properties are defined:
+     - popen: the underlying subprocess.Popen object
+     - retcode: the return code of the subprocess (if finished)
++
++    The implementation is not optimal, as a helper thread is created
++    for each subprocess.
+     """
+     def __init__(self, *args, **kargs):
+         WaitObject.__init__(self)
+@@ -24,12 +27,17 @@
+         self.protect()
+         self.popen = subprocess.Popen(*args, **kargs)
+         self.finished = False
++        # We create a thread for each subprocess, because Python
++        # has no portable primitive to wait asynchronously for
++        # multiple processes.
++        # XXX: try a poll/sleep loop instead
+         self._thread = Thread(target=self._blocking_wait,
+             name="softlets.popen helper thread")
+         self._thread.setDaemon(True)
+         self._thread.start()
+ 
+     def _blocking_wait(self):
++        print "** blocking_wait"
+         self.retcode = self.popen.wait()
+         self._on_subprocess_exited()
+ 
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 21:24:33 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 21:24:33 +0200
+Subject: [softlets-svn] trunk/softlets (3 files)
+Message-ID: <200510021924.j92JOXxv012866@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 21:24:32
+  Author: antoine
+Revision: 42
+
+popen : only use helper thread when armed
+
+Modified:
+  trunk/softlets/core/common.py
+  trunk/softlets/core/waitobject.py
+  trunk/softlets/popen.py
+
+Modified: trunk/softlets/core/common.py
+===================================================================
+--- trunk/softlets/core/common.py	2005-10-02 18:34:33 UTC (rev 41)
++++ trunk/softlets/core/common.py	2005-10-02 19:24:32 UTC (rev 42)
+@@ -33,21 +33,23 @@
+ # To be used when other threads have to interact with
+ # a switcher thread.
+ #
+-_lock = threading.Lock()
++_lock = threading.RLock()
+ 
+ def _protect(func, lock=None):
+     lock = lock or _lock
+     try:
+         func.__unprotected
+     except AttributeError:
+-        def wrapper(*args, **kargs):
++        def new_func(*args, **kargs):
+             lock.acquire()
+             try:
+                 return func(*args, **kargs)
+             finally:
+                 lock.release()
+-        wrapper.__unprotected = func
+-        return wrapper
++        new_func.__unprotected = func
++        new_func.__doc__ = func.__doc__
++        new_func.__name__ = func.__name__
++        return new_func
+     else:
+         return func
+ 
+
+Modified: trunk/softlets/core/waitobject.py
+===================================================================
+--- trunk/softlets/core/waitobject.py	2005-10-02 18:34:33 UTC (rev 41)
++++ trunk/softlets/core/waitobject.py	2005-10-02 19:24:32 UTC (rev 42)
+@@ -84,14 +84,20 @@
+ 
+     def notify_readiness(self, callback):
+         """
+-        Ask to be notified when the WaitObject's readiness changes.
++        Ask to be (synchronously) notified when the WaitObject's readiness changes.
+         The function will be called back with two arguments:
+         the WaitObject, and its ready state (True or False).
+         """
++        if not self._armed:
++            self.arm()
++            self._armed = True
+         self._readiness_callbacks.append(callback)
+         if self.ready:
+             callback(self, True)
+ 
++    #
++    # Support for logical operators between WaitObjects
++    #
+     def __or__(self, b):
+         if b is None:
+             return self
+
+Modified: trunk/softlets/popen.py
+===================================================================
+--- trunk/softlets/popen.py	2005-10-02 18:34:33 UTC (rev 41)
++++ trunk/softlets/popen.py	2005-10-02 19:24:32 UTC (rev 42)
+@@ -22,11 +22,27 @@
+     for each subprocess.
+     """
+     def __init__(self, *args, **kargs):
++        """
++        Launch a command in a subprocess.
++        Arguments are passed to subprocess.Popen.
++        """
+         WaitObject.__init__(self)
+         self.is_async = True
+         self.protect()
+         self.popen = subprocess.Popen(*args, **kargs)
+         self.finished = False
++        self._thread = None
++
++    def arm(self):
++        r = self.popen.poll()
++        if r is not None:
++            # Avoid launching a thread if already finished
++            self.retcode = r
++            self._on_subprocess_exited()
++        else:
++            self._start_polling()
++
++    def _start_polling(self):
+         # We create a thread for each subprocess, because Python
+         # has no portable primitive to wait asynchronously for
+         # multiple processes.
+@@ -37,7 +53,6 @@
+         self._thread.start()
+ 
+     def _blocking_wait(self):
+-        print "** blocking_wait"
+         self.retcode = self.popen.wait()
+         self._on_subprocess_exited()
+ 
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 21:50:04 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 21:50:04 +0200
+Subject: [softlets-svn] trunk (11 files)
+Message-ID: <200510021950.j92Jo4xB014292@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 21:50:04
+  Author: antoine
+Revision: 43
+
+make default imports narrower
+
+Modified:
+  trunk/examples/ex1.py
+  trunk/examples/ex2.py
+  trunk/examples/ex3.py
+  trunk/examples/ex4.py
+  trunk/examples/ex5.py
+  trunk/examples/ex6.py
+  trunk/examples/ex7.py
+  trunk/examples/popen1.py
+  trunk/examples/stress1.py
+  trunk/examples/stress2.py
+  trunk/softlets/__init__.py
+
+Modified: trunk/examples/ex1.py
+===================================================================
+--- trunk/examples/ex1.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex1.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -5,8 +5,11 @@
+ except ImportError:
+     import _autopath, softlets
+ 
+-q1 = softlets.Queue()
+-q2 = softlets.Queue()
++from softlets.queue import Queue
++
++
++q1 = Queue()
++q2 = Queue()
+ iterations = 3
+ 
+ def thread_a(n, qin, qout):
+
+Modified: trunk/examples/ex2.py
+===================================================================
+--- trunk/examples/ex2.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex2.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -5,7 +5,10 @@
+ except ImportError:
+     import _autopath, softlets
+ 
+-q = softlets.Queue()
++from softlets.queue import Queue
++from softlets.timer import Timer
++
++q = Queue()
+ iterations = 4
+ 
+ print "Producer/consumer running in lock step"
+@@ -18,7 +21,7 @@
+ 
+ def consumer(n, qin):
+     for i in range(n):
+-        yield softlets.Timer(0.1)
++        yield Timer(0.1)
+         yield qin
+         print "Thread B got '%s'" % qin.get()
+ 
+
+Modified: trunk/examples/ex3.py
+===================================================================
+--- trunk/examples/ex3.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex3.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -7,9 +7,13 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.queue import Queue
++from softlets.timer import Timer
++
++
+ def subthread(name, delay):
+     print "begin subthread %s" % name
+-    yield softlets.Timer(delay)
++    yield Timer(delay)
+     print "end subthread %s" % name
+ 
+ def main_thread():
+
+Modified: trunk/examples/ex4.py
+===================================================================
+--- trunk/examples/ex4.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex4.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -6,6 +6,9 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.queue import Queue
++
++
+ def sub_thread(queue, name, count):
+     print "begin subthread %s" % name
+     for i in range(count):
+@@ -28,7 +31,7 @@
+ iterations = 3
+ queues = []
+ for i in range(nb_queues):
+-    q = softlets.Queue()
++    q = Queue()
+     softlets.Softlet(sub_thread(q, chr(ord('A') + i), iterations))
+     queues.append(q)
+ softlets.Softlet(or_thread(queues, iterations))
+
+Modified: trunk/examples/ex5.py
+===================================================================
+--- trunk/examples/ex5.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex5.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -6,6 +6,9 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.queue import Queue
++
++
+ def sub_thread(queue, name, count):
+     print "begin subthread %s" % name
+     for i in range(count):
+@@ -29,7 +32,7 @@
+ iterations = 2
+ queues = []
+ for i in range(nb_queues):
+-    q = softlets.Queue()
++    q = Queue()
+     softlets.Softlet(sub_thread(q, chr(ord('A') + i), iterations))
+     queues.append(q)
+ softlets.Softlet(and_thread(queues, iterations))
+
+Modified: trunk/examples/ex6.py
+===================================================================
+--- trunk/examples/ex6.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex6.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -7,16 +7,19 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.timer import Timer
++
++
+ def subthread(name):
+     print "begin subthread %s" % name
+-    yield softlets.Timer(2)
++    yield Timer(2)
+     print "** error: we should never get here"
+ 
+ def main_thread():
+     print "main thread will kill subthreads on ending"
+     ta = softlets.Softlet(subthread('A'))
+     tb = softlets.Softlet(subthread('B'))
+-    yield softlets.Timer(1)
++    yield Timer(1)
+     print "end main thread"
+ 
+ softlets.Softlet(main_thread())
+
+Modified: trunk/examples/ex7.py
+===================================================================
+--- trunk/examples/ex7.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex7.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -1,13 +1,14 @@
+ #!/usr/bin/env python
+ 
++import sys
+ try:
+     import softlets
+ except ImportError:
+     import _autopath, softlets
+ 
+-import sys
+ from softlets.timer import Timer
+ 
++
+ nb_threads = len(sys.argv) > 1 and int(sys.argv[1]) or 10
+ step = 0.1
+ 
+
+Modified: trunk/examples/popen1.py
+===================================================================
+--- trunk/examples/popen1.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/popen1.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -8,6 +8,7 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.timer import Timer
+ from softlets.popen import Popen, PIPE
+ 
+ tick = 0.3
+
+Modified: trunk/examples/stress1.py
+===================================================================
+--- trunk/examples/stress1.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/stress1.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -6,6 +6,7 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++
+ # import psyco
+ # psyco.full()
+ 
+
+Modified: trunk/examples/stress2.py
+===================================================================
+--- trunk/examples/stress2.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/stress2.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -7,6 +7,9 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.timer import Timer
++
++
+ nb_threads = len(sys.argv) > 1 and int(sys.argv[1]) or 2000
+ nb_sleeps = 0
+ nb_simult = 0
+@@ -17,7 +20,7 @@
+ def sleeping_thread():
+     global nb_simult, nb_sleeps, max_simult
+     nb_simult += 1
+-    yield softlets.Timer(max(0.0, target - time.time()))
++    yield Timer(max(0.0, target - time.time()))
+     max_simult = max(max_simult, nb_simult)
+     nb_simult -= 1
+     nb_sleeps += 1
+
+Modified: trunk/softlets/__init__.py
+===================================================================
+--- trunk/softlets/__init__.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/softlets/__init__.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -4,5 +4,3 @@
+ """
+ 
+ from softlets.core import *
+-from softlets.queue import *
+-from softlets.timer import *
+
+
+
+From tasklets-svn at berlios.de  Sun Oct  2 22:24:44 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 2 Oct 2005 22:24:44 +0200
+Subject: [softlets-svn] trunk (5 files)
+Message-ID: <200510022024.j92KOir8016336@sheep.berlios.de>
+
+    Date: Sunday, October 2, 2005 @ 22:24:43
+  Author: antoine
+Revision: 44
+
+- exception classes + example
+- absolute imports
+
+Added:
+  trunk/examples/error1.py
+  trunk/softlets/core/errors.py
+Modified:
+  trunk/softlets/core/__init__.py
+  trunk/softlets/core/switcher.py
+  trunk/softlets/core/waitobject.py
+
+Added: trunk/examples/error1.py
+===================================================================
+--- trunk/examples/error1.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/examples/error1.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python
++
++import sys
++try:
++    import softlets
++except ImportError:
++    import _autopath, softlets
++
++from softlets.queue import Queue
++
++print "A consumer without producer"
++
++def main_thread():
++    q = Queue()
++    yield q
++
++softlets.Softlet(main_thread())
++softlets.main_loop()
+
+Modified: trunk/softlets/core/__init__.py
+===================================================================
+--- trunk/softlets/core/__init__.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/__init__.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -3,3 +3,4 @@
+ """
+ 
+ from softlets.core.switcher import *
++from softlets.core.errors import *
+
+Added: trunk/softlets/core/errors.py
+===================================================================
+--- trunk/softlets/core/errors.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/errors.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -0,0 +1,27 @@
++"""
++Various exception classes used in Softlets.
++"""
++
++class Error(StandardError):
++    """
++    An error in Softlets-related stuff.
++    """
++    def __str__(self):
++        try:
++            s = self.msg
++        except AttributeError:
++            s = self.__doc__
++        except AttributeError:
++            s = StandardError.__str__(self)
++        # Undo formatting in docstrings
++        lines = s.splitlines()
++        lines = [l.strip() for l in lines]
++        s = '\n'.join([l for l in lines if l])
++        return s
++
++class Starvation(Error):
++    """
++    Softlets are starved.
++    This means all softlets are waiting but none can be woken up,
++    and there are no async objects.
++    """
+
+Modified: trunk/softlets/core/switcher.py
+===================================================================
+--- trunk/softlets/core/switcher.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/switcher.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -2,8 +2,9 @@
+ import threading
+ from thread import get_ident
+ 
+-from common import *
+-from waitobject import WaitObject
++from softlets.core.common import *
++from softlets.core.errors import *
++from softlets.core.waitobject import WaitObject
+ 
+ 
+ #
+@@ -197,7 +198,7 @@
+                 # self.ready_objects is empty
+                 async = self.nb_async_waits > 0
+                 if not async:
+-                    raise Exception("softlets starved")
++                    raise Starvation()
+                 A()
+                 self.async_cond.wait()
+                 self.run_async_calls()
+
+Modified: trunk/softlets/core/waitobject.py
+===================================================================
+--- trunk/softlets/core/waitobject.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/waitobject.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -1,7 +1,7 @@
+ 
+ from collections import deque
+ 
+-from common import *
++from softlets.core.common import *
+ 
+ 
+ #
+
+
+
+From tasklets-svn at berlios.de  Mon Oct  3 01:49:10 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 3 Oct 2005 01:49:10 +0200
+Subject: [softlets-svn] trunk/examples (error1.py popen1.py)
+Message-ID: <200510022349.j92NnA3g011778@sheep.berlios.de>
+
+    Date: Monday, October 3, 2005 @ 01:48:45
+  Author: antoine
+Revision: 45
+
+api lag in example
+
+Modified:
+  trunk/examples/error1.py
+  trunk/examples/popen1.py
+
+Modified: trunk/examples/error1.py
+===================================================================
+--- trunk/examples/error1.py	2005-10-02 20:24:43 UTC (rev 44)
++++ trunk/examples/error1.py	2005-10-02 23:48:45 UTC (rev 45)
+@@ -8,10 +8,11 @@
+ 
+ from softlets.queue import Queue
+ 
+-print "A consumer without producer"
++print "A consumer without producer..."
+ 
+ def main_thread():
+     q = Queue()
++    print "... trying to fetch from queue\n"
+     yield q
+ 
+ softlets.Softlet(main_thread())
+
+Modified: trunk/examples/popen1.py
+===================================================================
+--- trunk/examples/popen1.py	2005-10-02 20:24:43 UTC (rev 44)
++++ trunk/examples/popen1.py	2005-10-02 23:48:45 UTC (rev 45)
+@@ -26,7 +26,7 @@
+     while not popen.finished:
+         print "\r" + clock.next(),
+         sys.stdout.flush()
+-        yield popen | softlets.Timer(tick)
++        yield popen | Timer(tick)
+     print "\rResult code =", popen.retcode
+     print "Output:"
+     print popen.popen.communicate()[0]
+
+
+
+From tasklets-svn at berlios.de  Sun Oct 16 02:48:17 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Sun, 16 Oct 2005 02:48:17 +0200
+Subject: [softlets-svn] trunk (setup.py softlets/core/switcher.py)
+Message-ID: <200510160048.j9G0mHFH030372@sheep.berlios.de>
+
+    Date: Sunday, October 16, 2005 @ 02:48:12
+  Author: antoine
+Revision: 46
+
+added a distutils-based setup script
+
+Added:
+  trunk/setup.py
+Modified:
+  trunk/softlets/core/switcher.py
+
+Added: trunk/setup.py
+===================================================================
+--- trunk/setup.py	2005-10-02 23:48:45 UTC (rev 45)
++++ trunk/setup.py	2005-10-16 00:48:12 UTC (rev 46)
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++
++from distutils.core import setup
++
++setup(
++    name='Softlets',
++    version='0.1',
++    description='A generic cooperative thread scheduler',
++    author='Antoine Pitrou',
++    author_email='antoine at pitrou.net',
++    url='http://developer.berlios.de/projects/tasklets',
++    download_url='http://developer.berlios.de/svn/?group_id=2599',
++    packages=['softlets', 'softlets.core'],
++    license="GNU LGPL",
++    classifiers=[
++        'Development Status :: 3 - Alpha',
++        'Environment :: Console',
++        'Environment :: No Input/Output (Daemon)',
++        'Intended Audience :: Developers',
++        'License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)',
++        'Natural Language :: English',
++        'Natural Language :: French',
++        'Operating System :: OS Independent',
++        'Programming Language :: Python',
++#         'Topic :: Communications',
++        'Topic :: Software Development :: Libraries',
++    ],
++)
++
++
+
+Modified: trunk/softlets/core/switcher.py
+===================================================================
+--- trunk/softlets/core/switcher.py	2005-10-02 23:48:45 UTC (rev 45)
++++ trunk/softlets/core/switcher.py	2005-10-16 00:48:12 UTC (rev 46)
+@@ -6,7 +6,6 @@
+ from softlets.core.errors import *
+ from softlets.core.waitobject import WaitObject
+ 
+-
+ #
+ # Ready object
+ #
+@@ -204,6 +203,7 @@
+                 self.run_async_calls()
+                 R()
+ 
++
+ #
+ # Functions
+ #
+
+
+
+From tasklets-svn at berlios.de  Mon Oct 17 01:05:49 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 17 Oct 2005 01:05:49 +0200
+Subject: [softlets-svn] trunk (MANIFEST.in)
+Message-ID: <200510162305.j9GN5nEE006676@sheep.berlios.de>
+
+    Date: Monday, October 17, 2005 @ 01:05:29
+  Author: antoine
+Revision: 47
+
+add manifest template to add license and examples to source build
+
+Added:
+  trunk/MANIFEST.in
+
+Added: trunk/MANIFEST.in
+===================================================================
+--- trunk/MANIFEST.in	2005-10-16 00:48:12 UTC (rev 46)
++++ trunk/MANIFEST.in	2005-10-16 23:05:29 UTC (rev 47)
+@@ -0,0 +1,3 @@
++include *.txt *.py LICENSE
++recursive-include examples *.py
++
+
+
+
+From tasklets-svn at berlios.de  Mon Oct 17 01:11:17 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 17 Oct 2005 01:11:17 +0200
+Subject: [softlets-svn] trunk (setup.py)
+Message-ID: <200510162311.j9GNBHfQ008232@sheep.berlios.de>
+
+    Date: Monday, October 17, 2005 @ 01:11:11
+  Author: antoine
+Revision: 48
+
+forgot softlets.util
+
+Modified:
+  trunk/setup.py
+
+Modified: trunk/setup.py
+===================================================================
+--- trunk/setup.py	2005-10-16 23:05:29 UTC (rev 47)
++++ trunk/setup.py	2005-10-16 23:11:11 UTC (rev 48)
+@@ -5,12 +5,12 @@
+ setup(
+     name='Softlets',
+     version='0.1',
+-    description='A generic cooperative thread scheduler',
++    description='A generic, flexible cooperative thread scheduler',
+     author='Antoine Pitrou',
+     author_email='antoine at pitrou.net',
+     url='http://developer.berlios.de/projects/tasklets',
+-    download_url='http://developer.berlios.de/svn/?group_id=2599',
+-    packages=['softlets', 'softlets.core'],
++    download_url='http://developer.berlios.de/project/showfiles.php?group_id=4330',
++    packages=['softlets', 'softlets.core', 'softlets.util'],
+     license="GNU LGPL",
+     classifiers=[
+         'Development Status :: 3 - Alpha',
+
+
+
+From tasklets-svn at berlios.de  Mon Oct 17 01:14:01 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 17 Oct 2005 01:14:01 +0200
+Subject: [softlets-svn]  (branches)
+Message-ID: <200510162314.j9GNE1Q0010129@sheep.berlios.de>
+
+    Date: Monday, October 17, 2005 @ 01:13:57
+  Author: antoine
+Revision: 49
+
+a subdir for branches
+
+Added:
+  branches/
+
+
+
+From tasklets-svn at berlios.de  Mon Oct 17 01:14:37 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 17 Oct 2005 01:14:37 +0200
+Subject: [softlets-svn] branches (release-0.1)
+Message-ID: <200510162314.j9GNEbpb010511@sheep.berlios.de>
+
+    Date: Monday, October 17, 2005 @ 01:14:35
+  Author: antoine
+Revision: 50
+
+creating first release (woo)
+
+Added:
+  branches/release-0.1/
+    (from rev 49, trunk)
+
+Copied: branches/release-0.1 (from rev 49, trunk)
+
+
+

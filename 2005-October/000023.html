@@ -1,0 +1,89 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/softlets (popen.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28popen.py%29&In-Reply-To=%3C200510021823.j92INRwU007718%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000022.html">
+   <LINK REL="Next"  HREF="000024.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/softlets (popen.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28popen.py%29&In-Reply-To=%3C200510021823.j92INRwU007718%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/softlets (popen.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct  2 20:23:27 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000022.html">[softlets-svn] trunk (examples/popen1.py softlets/popen.py)
+</A></li>
+        <LI>Next message: <A HREF="000024.html">[softlets-svn] trunk/softlets (core/waitobject.py popen.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23">[ date ]</a>
+              <a href="thread.html#23">[ thread ]</a>
+              <a href="subject.html#23">[ subject ]</a>
+              <a href="author.html#23">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 2, 2005 @ 20:23:26
+  Author: antoine
+Revision: 40
+
+comments
+
+Modified:
+  trunk/softlets/popen.py
+
+Modified: trunk/softlets/popen.py
+===================================================================
+--- trunk/softlets/popen.py	2005-10-02 17:29:50 UTC (rev 39)
++++ trunk/softlets/popen.py	2005-10-02 18:23:26 UTC (rev 40)
+@@ -11,6 +11,13 @@
+ 
+ 
+ class Popen(WaitObject):
++    &quot;&quot;&quot;
++    Executes a command in a subprocess (with the same args as
++    subprocess.Popen), and becomes ready when the subprocess ends.
++    The following properties are defined:
++    - popen: the underlying subprocess.Popen object
++    - retcode: the return code of the subprocess (if finished)
++    &quot;&quot;&quot;
+     def __init__(self, *args, **kargs):
+         WaitObject.__init__(self)
+         self.is_async = True
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000022.html">[softlets-svn] trunk (examples/popen1.py softlets/popen.py)
+</A></li>
+	<LI>Next message: <A HREF="000024.html">[softlets-svn] trunk/softlets (core/waitobject.py popen.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23">[ date ]</a>
+              <a href="thread.html#23">[ thread ]</a>
+              <a href="subject.html#23">[ subject ]</a>
+              <a href="author.html#23">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

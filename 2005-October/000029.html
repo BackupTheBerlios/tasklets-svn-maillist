@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk (setup.py softlets/core/switcher.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%28setup.py%20softlets/core/switcher.py%29&In-Reply-To=%3C200510160048.j9G0mHFH030372%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000028.html">
+   <LINK REL="Next"  HREF="000030.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk (setup.py softlets/core/switcher.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%28setup.py%20softlets/core/switcher.py%29&In-Reply-To=%3C200510160048.j9G0mHFH030372%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk (setup.py softlets/core/switcher.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct 16 02:48:17 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000028.html">[softlets-svn] trunk/examples (error1.py popen1.py)
+</A></li>
+        <LI>Next message: <A HREF="000030.html">[softlets-svn] trunk (MANIFEST.in)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29">[ date ]</a>
+              <a href="thread.html#29">[ thread ]</a>
+              <a href="subject.html#29">[ subject ]</a>
+              <a href="author.html#29">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 16, 2005 @ 02:48:12
+  Author: antoine
+Revision: 46
+
+added a distutils-based setup script
+
+Added:
+  trunk/setup.py
+Modified:
+  trunk/softlets/core/switcher.py
+
+Added: trunk/setup.py
+===================================================================
+--- trunk/setup.py	2005-10-02 23:48:45 UTC (rev 45)
++++ trunk/setup.py	2005-10-16 00:48:12 UTC (rev 46)
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++
++from distutils.core import setup
++
++setup(
++    name='Softlets',
++    version='0.1',
++    description='A generic cooperative thread scheduler',
++    author='Antoine Pitrou',
++    author_email='<A HREF="https://lists.berlios.de/mailman/listinfo/tasklets-svn">antoine at pitrou.net</A>',
++    url='<A HREF="http://developer.berlios.de/projects/tasklets">http://developer.berlios.de/projects/tasklets</A>',
++    download_url='<A HREF="http://developer.berlios.de/svn/?group_id=2599">http://developer.berlios.de/svn/?group_id=2599</A>',
++    packages=['softlets', 'softlets.core'],
++    license=&quot;GNU LGPL&quot;,
++    classifiers=[
++        'Development Status :: 3 - Alpha',
++        'Environment :: Console',
++        'Environment :: No Input/Output (Daemon)',
++        'Intended Audience :: Developers',
++        'License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)',
++        'Natural Language :: English',
++        'Natural Language :: French',
++        'Operating System :: OS Independent',
++        'Programming Language :: Python',
++#         'Topic :: Communications',
++        'Topic :: Software Development :: Libraries',
++    ],
++)
++
++
+
+Modified: trunk/softlets/core/switcher.py
+===================================================================
+--- trunk/softlets/core/switcher.py	2005-10-02 23:48:45 UTC (rev 45)
++++ trunk/softlets/core/switcher.py	2005-10-16 00:48:12 UTC (rev 46)
+@@ -6,7 +6,6 @@
+ from softlets.core.errors import *
+ from softlets.core.waitobject import WaitObject
+ 
+-
+ #
+ # Ready object
+ #
+@@ -204,6 +203,7 @@
+                 self.run_async_calls()
+                 R()
+ 
++
+ #
+ # Functions
+ #
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000028.html">[softlets-svn] trunk/examples (error1.py popen1.py)
+</A></li>
+	<LI>Next message: <A HREF="000030.html">[softlets-svn] trunk (MANIFEST.in)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29">[ date ]</a>
+              <a href="thread.html#29">[ thread ]</a>
+              <a href="subject.html#29">[ subject ]</a>
+              <a href="author.html#29">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk (5 files)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%285%20files%29&In-Reply-To=%3C200510022024.j92KOir8016336%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000026.html">
+   <LINK REL="Next"  HREF="000028.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk (5 files)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%285%20files%29&In-Reply-To=%3C200510022024.j92KOir8016336%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk (5 files)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct  2 22:24:44 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000026.html">[softlets-svn] trunk (11 files)
+</A></li>
+        <LI>Next message: <A HREF="000028.html">[softlets-svn] trunk/examples (error1.py popen1.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27">[ date ]</a>
+              <a href="thread.html#27">[ thread ]</a>
+              <a href="subject.html#27">[ subject ]</a>
+              <a href="author.html#27">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 2, 2005 @ 22:24:43
+  Author: antoine
+Revision: 44
+
+- exception classes + example
+- absolute imports
+
+Added:
+  trunk/examples/error1.py
+  trunk/softlets/core/errors.py
+Modified:
+  trunk/softlets/core/__init__.py
+  trunk/softlets/core/switcher.py
+  trunk/softlets/core/waitobject.py
+
+Added: trunk/examples/error1.py
+===================================================================
+--- trunk/examples/error1.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/examples/error1.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python
++
++import sys
++try:
++    import softlets
++except ImportError:
++    import _autopath, softlets
++
++from softlets.queue import Queue
++
++print &quot;A consumer without producer&quot;
++
++def main_thread():
++    q = Queue()
++    yield q
++
++softlets.Softlet(main_thread())
++softlets.main_loop()
+
+Modified: trunk/softlets/core/__init__.py
+===================================================================
+--- trunk/softlets/core/__init__.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/__init__.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -3,3 +3,4 @@
+ &quot;&quot;&quot;
+ 
+ from softlets.core.switcher import *
++from softlets.core.errors import *
+
+Added: trunk/softlets/core/errors.py
+===================================================================
+--- trunk/softlets/core/errors.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/errors.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -0,0 +1,27 @@
++&quot;&quot;&quot;
++Various exception classes used in Softlets.
++&quot;&quot;&quot;
++
++class Error(StandardError):
++    &quot;&quot;&quot;
++    An error in Softlets-related stuff.
++    &quot;&quot;&quot;
++    def __str__(self):
++        try:
++            s = self.msg
++        except AttributeError:
++            s = self.__doc__
++        except AttributeError:
++            s = StandardError.__str__(self)
++        # Undo formatting in docstrings
++        lines = s.splitlines()
++        lines = [l.strip() for l in lines]
++        s = '\n'.join([l for l in lines if l])
++        return s
++
++class Starvation(Error):
++    &quot;&quot;&quot;
++    Softlets are starved.
++    This means all softlets are waiting but none can be woken up,
++    and there are no async objects.
++    &quot;&quot;&quot;
+
+Modified: trunk/softlets/core/switcher.py
+===================================================================
+--- trunk/softlets/core/switcher.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/switcher.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -2,8 +2,9 @@
+ import threading
+ from thread import get_ident
+ 
+-from common import *
+-from waitobject import WaitObject
++from softlets.core.common import *
++from softlets.core.errors import *
++from softlets.core.waitobject import WaitObject
+ 
+ 
+ #
+@@ -197,7 +198,7 @@
+                 # self.ready_objects is empty
+                 async = self.nb_async_waits &gt; 0
+                 if not async:
+-                    raise Exception(&quot;softlets starved&quot;)
++                    raise Starvation()
+                 A()
+                 self.async_cond.wait()
+                 self.run_async_calls()
+
+Modified: trunk/softlets/core/waitobject.py
+===================================================================
+--- trunk/softlets/core/waitobject.py	2005-10-02 19:50:04 UTC (rev 43)
++++ trunk/softlets/core/waitobject.py	2005-10-02 20:24:43 UTC (rev 44)
+@@ -1,7 +1,7 @@
+ 
+ from collections import deque
+ 
+-from common import *
++from softlets.core.common import *
+ 
+ 
+ #
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000026.html">[softlets-svn] trunk (11 files)
+</A></li>
+	<LI>Next message: <A HREF="000028.html">[softlets-svn] trunk/examples (error1.py popen1.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27">[ date ]</a>
+              <a href="thread.html#27">[ thread ]</a>
+              <a href="subject.html#27">[ subject ]</a>
+              <a href="author.html#27">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

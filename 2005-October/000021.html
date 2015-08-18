@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/softlets (3 files)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%283%20files%29&In-Reply-To=%3C200510021725.j92HPQX8013163%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000020.html">
+   <LINK REL="Next"  HREF="000022.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/softlets (3 files)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%283%20files%29&In-Reply-To=%3C200510021725.j92HPQX8013163%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/softlets (3 files)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct  2 19:25:26 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000020.html">[softlets-svn] trunk/softlets (timer.py)
+</A></li>
+        <LI>Next message: <A HREF="000022.html">[softlets-svn] trunk (examples/popen1.py softlets/popen.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21">[ date ]</a>
+              <a href="thread.html#21">[ thread ]</a>
+              <a href="subject.html#21">[ subject ]</a>
+              <a href="author.html#21">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 2, 2005 @ 19:25:12
+  Author: antoine
+Revision: 38
+
+bug at shutdown with TimeThread
+
+Modified:
+  trunk/softlets/__init__.py
+  trunk/softlets/core/__init__.py
+  trunk/softlets/timethread.py
+
+Modified: trunk/softlets/__init__.py
+===================================================================
+--- trunk/softlets/__init__.py	2005-10-02 15:34:18 UTC (rev 37)
++++ trunk/softlets/__init__.py	2005-10-02 17:25:12 UTC (rev 38)
+@@ -1,5 +1,7 @@
+ 
+-&quot;&quot;&quot;Softlets: a pure Python cooperative multithreading package.&quot;&quot;&quot;
++&quot;&quot;&quot;
++Softlets: a pure Python cooperative multithreading package.
++&quot;&quot;&quot;
+ 
+ from softlets.core import *
+ from softlets.queue import *
+
+Modified: trunk/softlets/core/__init__.py
+===================================================================
+--- trunk/softlets/core/__init__.py	2005-10-02 15:34:18 UTC (rev 37)
++++ trunk/softlets/core/__init__.py	2005-10-02 17:25:12 UTC (rev 38)
+@@ -1,3 +1,5 @@
++&quot;&quot;&quot;
++Softlets core machinery.
++&quot;&quot;&quot;
+ 
+ from softlets.core.switcher import *
+-# from softlets.core.waitobject import *
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-10-02 15:34:18 UTC (rev 37)
++++ trunk/softlets/timethread.py	2005-10-02 17:25:12 UTC (rev 38)
+@@ -35,15 +35,17 @@
+         threading.Thread.__init__(self)
+         self.callbacks = []
+         self.interrupt = threading.Condition()
+-        self.started = False
+         self.running = False
+-        self.setDaemon(True)
+ 
+     def start(self):
+-        if not self.started:
+-            threading.Thread.start(self)
+-            self.started = True
+-            atexit.register(self.finish)
++        assert not self.running, &quot;TimeThread already started&quot;
++        self.thread = threading.Thread(
++            target=self.run,
++            name=&quot;TimeThread polling thread&quot;)
++        self.thread.setDaemon(True)
++        self.thread.start()
++        self.running = True
++        atexit.register(self.finish)
+ 
+     def get_lock(self):
+         return self.interrupt
+@@ -89,15 +91,15 @@
+         self.callbacks = []
+         self.interrupt.notify()
+         self.interrupt.release()
+-        self.join()
++        self.thread.join()
+ 
+     def run(self):
+-        self.running = True
+         try:
+             self.interrupt.acquire()
+             while self.running:
+                 if not self.callbacks:
+-                    self.interrupt.wait()
++                    if self.running:
++                        self.interrupt.wait()
+                     continue
+                 cb = self.callbacks[0]
+                 timeout = cb.timestamp - time.time()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000020.html">[softlets-svn] trunk/softlets (timer.py)
+</A></li>
+	<LI>Next message: <A HREF="000022.html">[softlets-svn] trunk (examples/popen1.py softlets/popen.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21">[ date ]</a>
+              <a href="thread.html#21">[ thread ]</a>
+              <a href="subject.html#21">[ subject ]</a>
+              <a href="author.html#21">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

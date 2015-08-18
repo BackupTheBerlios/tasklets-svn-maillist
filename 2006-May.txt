@@ -1,0 +1,253 @@
+From tasklets-svn at berlios.de  Mon May  1 01:11:18 2006
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 1 May 2006 01:11:18 +0200
+Subject: [softlets-svn] trunk/softlets (5 files)
+Message-ID: <200604302311.k3UNBIUw029934@sheep.berlios.de>
+
+    Date: Monday, May 1, 2006 @ 01:10:49
+  Author: antoine
+Revision: 51
+
+- slightly improved NamedTuple
+- fix extreme synchronization issues
+
+Modified:
+  trunk/softlets/core/common.py
+  trunk/softlets/core/switcher.py
+  trunk/softlets/timer.py
+  trunk/softlets/timethread.py
+  trunk/softlets/util/namedtuple.py
+
+Modified: trunk/softlets/core/common.py
+===================================================================
+--- trunk/softlets/core/common.py	2005-10-16 23:14:35 UTC (rev 50)
++++ trunk/softlets/core/common.py	2006-04-30 23:10:49 UTC (rev 51)
+@@ -41,8 +41,8 @@
+         func.__unprotected
+     except AttributeError:
+         def new_func(*args, **kargs):
+-            lock.acquire()
+             try:
++                lock.acquire()
+                 return func(*args, **kargs)
+             finally:
+                 lock.release()
+
+Modified: trunk/softlets/core/switcher.py
+===================================================================
+--- trunk/softlets/core/switcher.py	2005-10-16 23:14:35 UTC (rev 50)
++++ trunk/softlets/core/switcher.py	2006-04-30 23:10:49 UTC (rev 51)
+@@ -169,9 +169,11 @@
+         while len(self.threads) > self.nb_daemons:
+             # Process pending async calls
+             if self.async_calls:
+-                A()
+-                self.run_async_calls()
+-                R()
++                try:
++                    A()
++                    self.run_async_calls()
++                finally:
++                    R()
+             # This loop is a fake: we always break because
+             # thread calls inside the loop can change the set size
+             for r in self.ready_objects:
+@@ -198,10 +200,12 @@
+                 async = self.nb_async_waits > 0
+                 if not async:
+                     raise Starvation()
+-                A()
+-                self.async_cond.wait()
+-                self.run_async_calls()
+-                R()
++                try:
++                    A()
++                    self.async_cond.wait()
++                    self.run_async_calls()
++                finally:
++                    R()
+ 
+ 
+ #
+
+Modified: trunk/softlets/timer.py
+===================================================================
+--- trunk/softlets/timer.py	2005-10-16 23:14:35 UTC (rev 50)
++++ trunk/softlets/timer.py	2006-04-30 23:10:49 UTC (rev 51)
+@@ -26,8 +26,8 @@
+     def reschedule(self):
+         # take the lock to ensure the callback doesn't
+         # expire in the meantime
+-        self.lock.acquire()
+         try:
++            self.lock.acquire()
+             if self.callback:
+                 self.timethread.remove_timer(self.callback)
+             self.set_ready(False)
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-10-16 23:14:35 UTC (rev 50)
++++ trunk/softlets/timethread.py	2006-04-30 23:10:49 UTC (rev 51)
+@@ -30,9 +30,8 @@
+ _Callback = NamedTuple("timestamp", "func")
+ 
+ 
+-class _TimeThread(threading.Thread):
++class _TimeThread(object):
+     def __init__(self):
+-        threading.Thread.__init__(self)
+         self.callbacks = []
+         self.interrupt = threading.Condition()
+         self.running = False
+@@ -86,8 +85,8 @@
+             self.interrupt.release()
+ 
+     def finish(self):
+-        self.running = False
+         self.interrupt.acquire()
++        self.running = False
+         self.callbacks = []
+         self.interrupt.notify()
+         self.interrupt.release()
+@@ -98,8 +97,7 @@
+             self.interrupt.acquire()
+             while self.running:
+                 if not self.callbacks:
+-                    if self.running:
+-                        self.interrupt.wait()
++                    self.interrupt.wait()
+                     continue
+                 cb = self.callbacks[0]
+                 timeout = cb.timestamp - time.time()
+
+Modified: trunk/softlets/util/namedtuple.py
+===================================================================
+--- trunk/softlets/util/namedtuple.py	2005-10-16 23:14:35 UTC (rev 50)
++++ trunk/softlets/util/namedtuple.py	2006-04-30 23:10:49 UTC (rev 51)
+@@ -5,11 +5,11 @@
+     """
+     Create a named tuple class from a list of property names.
+     """
+-    d = dict([(name, index) for index, name in enumerate(names)])
++    name_to_index = dict([(name, index) for index, name in enumerate(names)])
+     n = len(names)
+     tdoc = "Automatically generated named tuple.\n"
+     tdoc += "Properties are (in slot order):\n"
+-    for name in d:
++    for name in names:
+         tdoc += "- '%s'\n" % name
+     tdoc += "This class has the natural characteristics of a tuple:\n"
+     tdoc += "light memory usage, builtin comparison, builtin hashing...\n"
+@@ -17,17 +17,40 @@
+     class T(tuple):
+         __doc__ = tdoc
+         def __new__(cls, *args, **kargs):
+-            p = len(args)
+-            assert p + len(kargs) == n
+-            l = list(args) + [None] * (n - p)
+-            for k, v in kargs.items():
+-                i = d[k]
+-                assert i >= p
+-                l[i] = v
+-            return tuple.__new__(cls, l)
+-    for name, index in d.items():
++            nk = len(kargs)
++            np = len(args)
++            if np + nk != n:
++                raise TypeError("%d elements expected, got %d" % (n, np + nk))
++            if not nk:
++                t = args
++            else:
++                try:
++                    t = args + tuple(kargs[names[i]] for i in xrange(np, n))
++                except KeyError:
++                    for i in xrange(np, n):
++                        if names[i] not in kargs:
++                            raise TypeError("Missing parameter '%s'" % names[i])
++                    assert False # should not happen
++            return tuple.__new__(cls, t)
++    for name, index in name_to_index.items():
+         setattr(T, name, property(
+             fget=itemgetter(index),
+             doc="Property '%s' (slot #%d of named tuple)" % (name, index),
+             ))
+     return T
++
++
++def __test():
++    Point = NamedTuple('x', 'y')
++    print Point.__doc__
++    a = Point(1, 2)
++    b = Point(y=2, x=1)
++    print a
++    print b
++    print a[0], a[1]
++    print b[0], b[1]
++
++
++if __name__ == "__main__":
++    __test()
++
+
+
+
+From tasklets-svn at berlios.de  Mon May  1 01:20:17 2006
+From: tasklets-svn at berlios.de (antoine)
+Date: Mon, 1 May 2006 01:20:17 +0200
+Subject: [softlets-svn] trunk/softlets (timethread.py)
+Message-ID: <200604302320.k3UNKHlH031117@sheep.berlios.de>
+
+    Date: Monday, May 1, 2006 @ 01:19:33
+  Author: antoine
+Revision: 52
+
+- small clean-up
+
+Modified:
+  trunk/softlets/timethread.py
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2006-04-30 23:10:49 UTC (rev 51)
++++ trunk/softlets/timethread.py	2006-04-30 23:19:33 UTC (rev 52)
+@@ -10,27 +10,15 @@
+ import atexit
+ from heapq import heappush, heappop, heapify
+ 
+-from softlets.core.common import _singleton
++#from softlets.core.common import _singleton
+ from softlets.util.namedtuple import NamedTuple
+ 
+ __all__ = ['TimeThread']
+ 
+-
+-def _p(s):
+-    def p():
+-        print s
+-    return p
+-
+-def _q(s):
+-    def q():
+-        if not s % 100:
+-            print s
+-    return q
+-
+ _Callback = NamedTuple("timestamp", "func")
+ 
+ 
+-class _TimeThread(object):
++class TimeThread(object):
+     def __init__(self):
+         self.callbacks = []
+         self.interrupt = threading.Condition()
+@@ -113,5 +101,5 @@
+             self.interrupt.release()
+ 
+ 
+-TimeThread = _singleton(_TimeThread)
++#TimeThread = _singleton(_TimeThread)
+ 
+
+
+

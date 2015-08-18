@@ -1,0 +1,102 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/softlets (timethread.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-August/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28timethread.py%29&In-Reply-To=%3C200508211715.j7LHF45f016298%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000011.html">
+   <LINK REL="Next"  HREF="000013.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/softlets (timethread.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28timethread.py%29&In-Reply-To=%3C200508211715.j7LHF45f016298%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/softlets (timethread.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Aug 21 19:15:04 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000011.html">[softlets-svn] trunk/examples (ex2.py ex3.py ex6.py)
+</A></li>
+        <LI>Next message: <A HREF="000013.html">[softlets-svn] trunk/examples (stress2.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12">[ date ]</a>
+              <a href="thread.html#12">[ thread ]</a>
+              <a href="subject.html#12">[ subject ]</a>
+              <a href="author.html#12">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, August 21, 2005 @ 19:15:03
+  Author: antoine
+Revision: 29
+
+add exit handler for graceful cleanup of helper thread
+
+Modified:
+  trunk/softlets/timethread.py
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-08-21 17:14:04 UTC (rev 28)
++++ trunk/softlets/timethread.py	2005-08-21 17:15:03 UTC (rev 29)
+@@ -7,6 +7,7 @@
+ 
+ import time
+ import threading
++import atexit
+ from heapq import heappush, heappop, heapify
+ from operator import itemgetter
+ 
+@@ -59,6 +60,7 @@
+         if not self.started:
+             threading.Thread.start(self)
+             self.started = True
++            atexit.register(self.finish)
+ 
+     def get_lock(self):
+         return self.interrupt
+@@ -101,8 +103,10 @@
+     def finish(self):
+         self.running = False
+         self.interrupt.acquire()
++        self.callbacks = []
+         self.interrupt.notify()
+         self.interrupt.release()
++        self.join()
+ 
+     def run(self):
+         self.running = True
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000011.html">[softlets-svn] trunk/examples (ex2.py ex3.py ex6.py)
+</A></li>
+	<LI>Next message: <A HREF="000013.html">[softlets-svn] trunk/examples (stress2.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12">[ date ]</a>
+              <a href="thread.html#12">[ thread ]</a>
+              <a href="subject.html#12">[ subject ]</a>
+              <a href="author.html#12">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

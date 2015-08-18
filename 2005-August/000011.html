@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/examples (ex2.py ex3.py ex6.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-August/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/examples%20%28ex2.py%20ex3.py%20ex6.py%29&In-Reply-To=%3C200508211714.j7LHE6k4015207%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000010.html">
+   <LINK REL="Next"  HREF="000012.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/examples (ex2.py ex3.py ex6.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/examples%20%28ex2.py%20ex3.py%20ex6.py%29&In-Reply-To=%3C200508211714.j7LHE6k4015207%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/examples (ex2.py ex3.py ex6.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Aug 21 19:14:06 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000010.html">[softlets-svn] trunk/examples (ex2.py stress1.py)
+</A></li>
+        <LI>Next message: <A HREF="000012.html">[softlets-svn] trunk/softlets (timethread.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11">[ date ]</a>
+              <a href="thread.html#11">[ thread ]</a>
+              <a href="subject.html#11">[ subject ]</a>
+              <a href="author.html#11">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, August 21, 2005 @ 19:14:04
+  Author: antoine
+Revision: 28
+
+new example + correct other ones
+
+Added:
+  trunk/examples/ex2.py
+Modified:
+  trunk/examples/ex3.py
+  trunk/examples/ex6.py
+
+Added: trunk/examples/ex2.py
+===================================================================
+--- trunk/examples/ex2.py	2005-08-21 16:52:51 UTC (rev 27)
++++ trunk/examples/ex2.py	2005-08-21 17:14:04 UTC (rev 28)
+@@ -0,0 +1,27 @@
++#!/usr/bin/env python
++
++try:
++    import softlets
++except ImportError:
++    import _autopath, softlets
++
++q = softlets.Queue()
++iterations = 4
++
++print &quot;Producer/consumer running in lock step&quot;
++
++def producer(n, qout):
++    for i in range(n):
++        yield ~qout
++        print &quot;Thread A put '%s'&quot; % (n-i)
++        qout.put(n-i)
++
++def consumer(n, qin):
++    for i in range(n):
++        yield softlets.Timer(0.1)
++        yield qin
++        print &quot;Thread B got '%s'&quot; % qin.get()
++
++softlets.Softlet(producer(iterations, q))
++softlets.Softlet(consumer(iterations, q))
++softlets.main_loop()
+
+
+Property changes on: trunk/examples/ex2.py
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Modified: trunk/examples/ex3.py
+===================================================================
+--- trunk/examples/ex3.py	2005-08-21 16:52:51 UTC (rev 27)
++++ trunk/examples/ex3.py	2005-08-21 17:14:04 UTC (rev 28)
+@@ -7,22 +7,23 @@
+ except ImportError:
+     import _autopath, softlets
+ 
+-def subthread(name):
++def subthread(name, delay):
+     print &quot;begin subthread %s&quot; % name
+-    time.sleep(1)
+-    yield softlets.Ready()
+-    time.sleep(1)
++    yield softlets.Timer(delay)
+     print &quot;end subthread %s&quot; % name
+ 
+ def main_thread():
+-    print &quot;begin main thread&quot;
+-    ta = softlets.Softlet(subthread('A'))
+-    tb = softlets.Softlet(subthread('B'))
+-    yield ta
+-    print &quot;A finished&quot;
+-    yield tb
+-    print &quot;B finished&quot;
+-    print &quot;end main thread&quot;
++    print &quot;waiting on two threads&quot;
++    ta = softlets.Softlet(subthread('A', 1))
++    tb = softlets.Softlet(subthread('B', 2))
++    yield ta | tb
++    if ta.finished:
++        print &quot;A finished&quot;
++        yield tb
++    elif tb.finished:
++        print &quot;B finished&quot;
++        yield ta
++    print &quot;A &amp; B finished&quot;
+ 
+ softlets.Softlet(main_thread())
+ softlets.main_loop()
+
+Modified: trunk/examples/ex6.py
+===================================================================
+--- trunk/examples/ex6.py	2005-08-21 16:52:51 UTC (rev 27)
++++ trunk/examples/ex6.py	2005-08-21 17:14:04 UTC (rev 28)
+@@ -9,17 +9,15 @@
+ 
+ def subthread(name):
+     print &quot;begin subthread %s&quot; % name
+-    time.sleep(1)
+-    yield softlets.Ready()
+-    time.sleep(1)
++    yield softlets.Timer(2)
+     print &quot;** error: we should never get here&quot;
+ 
+ def main_thread():
+-    print &quot;begin main thread&quot;
++    print &quot;main thread will kill subthreads on ending&quot;
+     ta = softlets.Softlet(subthread('A'))
+     tb = softlets.Softlet(subthread('B'))
+-    yield softlets.Ready()
+-    print &quot;end main thread, killing subthreads&quot;
++    yield softlets.Timer(1)
++    print &quot;end main thread&quot;
+ 
+ softlets.Softlet(main_thread())
+ softlets.main_loop()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000010.html">[softlets-svn] trunk/examples (ex2.py stress1.py)
+</A></li>
+	<LI>Next message: <A HREF="000012.html">[softlets-svn] trunk/softlets (timethread.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11">[ date ]</a>
+              <a href="thread.html#11">[ thread ]</a>
+              <a href="subject.html#11">[ subject ]</a>
+              <a href="author.html#11">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

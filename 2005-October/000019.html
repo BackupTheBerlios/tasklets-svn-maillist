@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk (5 files)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%285%20files%29&In-Reply-To=%3C200510021515.j92FFrAl012842%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000018.html">
+   <LINK REL="Next"  HREF="000020.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk (5 files)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%285%20files%29&In-Reply-To=%3C200510021515.j92FFrAl012842%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk (5 files)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct  2 17:15:53 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000018.html">[softlets-svn] trunk (8 files)
+</A></li>
+        <LI>Next message: <A HREF="000020.html">[softlets-svn] trunk/softlets (timer.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19">[ date ]</a>
+              <a href="thread.html#19">[ thread ]</a>
+              <a href="subject.html#19">[ subject ]</a>
+              <a href="author.html#19">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 2, 2005 @ 17:15:52
+  Author: antoine
+Revision: 36
+
+split modules
+
+Added:
+  trunk/softlets/util/
+  trunk/softlets/util/__init__.py
+  trunk/softlets/util/namedtuple.py
+Modified:
+  trunk/examples/_autopath.py
+  trunk/softlets/timethread.py
+
+Modified: trunk/examples/_autopath.py
+===================================================================
+--- trunk/examples/_autopath.py	2005-10-02 14:51:37 UTC (rev 35)
++++ trunk/examples/_autopath.py	2005-10-02 15:15:52 UTC (rev 36)
+@@ -8,17 +8,18 @@
+     if path is None:
+         path = os.path.abspath(__file__)
+     subdir = os.path.join(path, package_name)
++    exc = None
+     if os.path.isdir(subdir):
+         sys.path.append(path)
+         try:
+             __import__(package_name)
+             return
+-        except ImportError:
++        except ImportError, exc:
+             sys.path.remove(path)
+     # Get parent
+     parent = os.path.split(path)[0]
+     if parent == path:
+-        raise ImportError(&quot;Could not find package '%s'&quot; % package_name)
++        raise ImportError(&quot;Could not find package '%s':\n%s&quot; % (package_name, exc))
+     _autopath(package_name, parent)
+ 
+ _autopath()
+
+Modified: trunk/softlets/timethread.py
+===================================================================
+--- trunk/softlets/timethread.py	2005-10-02 14:51:37 UTC (rev 35)
++++ trunk/softlets/timethread.py	2005-10-02 15:15:52 UTC (rev 36)
+@@ -9,9 +9,9 @@
+ import threading
+ import atexit
+ from heapq import heappush, heappop, heapify
+-from operator import itemgetter
+ 
+ from softlets.core.common import _singleton
++from softlets.util.namedtuple import NamedTuple
+ 
+ __all__ = ['TimeThread']
+ 
+@@ -27,23 +27,6 @@
+             print s
+     return q
+ 
+-def NamedTuple(*names):
+-    d = dict([(name, index) for index, name in enumerate(names)])
+-    n = len(names)
+-    class T(tuple):
+-        def __new__(cls, *args, **kargs):
+-            p = len(args)
+-            assert p + len(kargs) == n
+-            l = list(args) + [None] * (n - p)
+-            for k, v in kargs.items():
+-                i = d[k]
+-                assert i &gt;= p
+-                l[i] = v
+-            return tuple.__new__(cls, l)
+-    for k, v in d.items():
+-        setattr(T, k, property(itemgetter(v)))
+-    return T
+-
+ _Callback = NamedTuple(&quot;timestamp&quot;, &quot;func&quot;)
+ 
+ 
+
+Added: trunk/softlets/util/__init__.py
+===================================================================
+
+Added: trunk/softlets/util/namedtuple.py
+===================================================================
+--- trunk/softlets/util/namedtuple.py	2005-10-02 14:51:37 UTC (rev 35)
++++ trunk/softlets/util/namedtuple.py	2005-10-02 15:15:52 UTC (rev 36)
+@@ -0,0 +1,33 @@
++
++from operator import itemgetter
++
++def NamedTuple(*names):
++    &quot;&quot;&quot;
++    Create a named tuple class from a list of property names.
++    &quot;&quot;&quot;
++    d = dict([(name, index) for index, name in enumerate(names)])
++    n = len(names)
++    tdoc = &quot;Automatically generated named tuple.\n&quot;
++    tdoc += &quot;Properties are (in slot order):\n&quot;
++    for name in d:
++        tdoc += &quot;- '%s'\n&quot; % name
++    tdoc += &quot;This class has the natural characteristics of a tuple:\n&quot;
++    tdoc += &quot;light memory usage, builtin comparison, builtin hashing...\n&quot;
++
++    class T(tuple):
++        __doc__ = tdoc
++        def __new__(cls, *args, **kargs):
++            p = len(args)
++            assert p + len(kargs) == n
++            l = list(args) + [None] * (n - p)
++            for k, v in kargs.items():
++                i = d[k]
++                assert i &gt;= p
++                l[i] = v
++            return tuple.__new__(cls, l)
++    for name, index in d.items():
++        setattr(T, name, property(
++            fget=itemgetter(index),
++            doc=&quot;Property '%s' (slot #%d of named tuple)&quot; % (name, index),
++            ))
++    return T
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000018.html">[softlets-svn] trunk (8 files)
+</A></li>
+	<LI>Next message: <A HREF="000020.html">[softlets-svn] trunk/softlets (timer.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19">[ date ]</a>
+              <a href="thread.html#19">[ thread ]</a>
+              <a href="subject.html#19">[ subject ]</a>
+              <a href="author.html#19">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

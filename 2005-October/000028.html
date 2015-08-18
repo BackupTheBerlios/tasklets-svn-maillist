@@ -1,0 +1,103 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/examples (error1.py popen1.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/examples%20%28error1.py%20popen1.py%29&In-Reply-To=%3C200510022349.j92NnA3g011778%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000027.html">
+   <LINK REL="Next"  HREF="000029.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/examples (error1.py popen1.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/examples%20%28error1.py%20popen1.py%29&In-Reply-To=%3C200510022349.j92NnA3g011778%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/examples (error1.py popen1.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Mon Oct  3 01:49:10 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000027.html">[softlets-svn] trunk (5 files)
+</A></li>
+        <LI>Next message: <A HREF="000029.html">[softlets-svn] trunk (setup.py softlets/core/switcher.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28">[ date ]</a>
+              <a href="thread.html#28">[ thread ]</a>
+              <a href="subject.html#28">[ subject ]</a>
+              <a href="author.html#28">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Monday, October 3, 2005 @ 01:48:45
+  Author: antoine
+Revision: 45
+
+api lag in example
+
+Modified:
+  trunk/examples/error1.py
+  trunk/examples/popen1.py
+
+Modified: trunk/examples/error1.py
+===================================================================
+--- trunk/examples/error1.py	2005-10-02 20:24:43 UTC (rev 44)
++++ trunk/examples/error1.py	2005-10-02 23:48:45 UTC (rev 45)
+@@ -8,10 +8,11 @@
+ 
+ from softlets.queue import Queue
+ 
+-print &quot;A consumer without producer&quot;
++print &quot;A consumer without producer...&quot;
+ 
+ def main_thread():
+     q = Queue()
++    print &quot;... trying to fetch from queue\n&quot;
+     yield q
+ 
+ softlets.Softlet(main_thread())
+
+Modified: trunk/examples/popen1.py
+===================================================================
+--- trunk/examples/popen1.py	2005-10-02 20:24:43 UTC (rev 44)
++++ trunk/examples/popen1.py	2005-10-02 23:48:45 UTC (rev 45)
+@@ -26,7 +26,7 @@
+     while not popen.finished:
+         print &quot;\r&quot; + clock.next(),
+         sys.stdout.flush()
+-        yield popen | softlets.Timer(tick)
++        yield popen | Timer(tick)
+     print &quot;\rResult code =&quot;, popen.retcode
+     print &quot;Output:&quot;
+     print popen.popen.communicate()[0]
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000027.html">[softlets-svn] trunk (5 files)
+</A></li>
+	<LI>Next message: <A HREF="000029.html">[softlets-svn] trunk (setup.py softlets/core/switcher.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28">[ date ]</a>
+              <a href="thread.html#28">[ thread ]</a>
+              <a href="subject.html#28">[ subject ]</a>
+              <a href="author.html#28">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

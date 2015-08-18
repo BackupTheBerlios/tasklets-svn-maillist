@@ -1,0 +1,183 @@
+From tasklets-svn at berlios.de  Wed Sep  7 00:15:30 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Wed, 7 Sep 2005 00:15:30 +0200
+Subject: [softlets-svn] trunk/softlets (core.py)
+Message-ID: <200509062215.j86MFUbQ027796@sheep.berlios.de>
+
+    Date: Wednesday, September 7, 2005 @ 00:15:30
+  Author: antoine
+Revision: 32
+
+avoid systematic synchronization calls (acquire / release)
+by using a separate list for pending async calls
+
+Modified:
+  trunk/softlets/core.py
+
+Modified: trunk/softlets/core.py
+===================================================================
+--- trunk/softlets/core.py	2005-08-26 00:25:01 UTC (rev 31)
++++ trunk/softlets/core.py	2005-09-06 22:15:30 UTC (rev 32)
+@@ -351,6 +351,7 @@
+         self.tid = get_ident()
+         self.nb_async_waits = 0
+         self.async_cond = threading.Condition()
++        self.async_calls = []
+ 
+     def add_thread(self, thread):
+         wait_object = Ready()
+@@ -376,16 +377,17 @@
+     def set_ready(self, wait_object, ready):
+         # May be called async (out-of-thread)
+         async = (get_ident() != self.tid)
+-        if ready:
+-            if async:
+-                self.async_cond.acquire()
++        if async:
++            def f():
++                self.set_ready(wait_object, ready)
++            self.push_async_call(f)
++            return
++        else:
++            # In-thread
++            if ready:
+                 self.ready_objects.add(wait_object)
+-                self.async_cond.notify()
+-                self.async_cond.release()
+             else:
+-                self.ready_objects.add(wait_object)
+-        else:
+-            self.ready_objects.discard(wait_object)
++                self.ready_objects.discard(wait_object)
+ 
+     def add_ready_object(self, wait_object):
+         # Called in-thread
+@@ -395,19 +397,31 @@
+         # Called in-thread
+         self.ready_objects.remove(wait_object)
+ 
++    def push_async_call(self, func):
++        # Called out-of-thread
++        self.async_cond.acquire()
++        self.async_calls.append(func)
++        self.async_cond.notify()
++        self.async_cond.release()
++
++    def run_async_calls(self):
++        # Called in-thread while locked
++        for fun in self.async_calls:
++            fun()
++        del self.async_calls[:]
++
+     def run(self):
+-        _ar_null = (lambda: 0, lambda: 0)
+-        _ar_async = (self.async_cond.acquire, self.async_cond.release)
++        A, R = (self.async_cond.acquire, self.async_cond.release)
+         while len(self.threads) > self.nb_daemons:
+-            async = self.nb_async_waits > 0
+-            A, R = async and _ar_async or _ar_null
+-            A()
+-            if not self.ready_objects:
+-                if not async:
+-                    raise Exception("softlets starved")
+-                self.async_cond.wait()
++            # Process pending async calls
++            if self.async_calls:
++                A()
++                self.run_async_calls()
++                R()
++            # This loop is a fake: we always break because
++            # thread calls inside the loop can change the set size
+             for r in self.ready_objects:
+-                R()
++                # Give control to a thread
+                 thread = r.get_waiter(self)
+                 if thread is None or thread.finished:
+                     break
+@@ -426,6 +440,13 @@
+                     thread.waiting_on = wait_object
+                 break
+             else:
++                # self.ready_objects is empty
++                async = self.nb_async_waits > 0
++                if not async:
++                    raise Exception("softlets starved")
++                A()
++                self.async_cond.wait()
++                self.run_async_calls()
+                 R()
+ 
+ #
+
+
+
+From tasklets-svn at berlios.de  Wed Sep  7 00:50:05 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Wed, 7 Sep 2005 00:50:05 +0200
+Subject: [softlets-svn] trunk/softlets (core.py)
+Message-ID: <200509062250.j86Mo5eD021449@sheep.berlios.de>
+
+    Date: Wednesday, September 7, 2005 @ 00:49:50
+  Author: antoine
+Revision: 33
+
+use non-recursive lock in condition variable
+(this is sufficient for us)
+
+Modified:
+  trunk/softlets/core.py
+
+Modified: trunk/softlets/core.py
+===================================================================
+--- trunk/softlets/core.py	2005-09-06 22:15:30 UTC (rev 32)
++++ trunk/softlets/core.py	2005-09-06 22:49:50 UTC (rev 33)
+@@ -350,7 +350,7 @@
+         # Async signalling (objects waken out of the switcher thread)
+         self.tid = get_ident()
+         self.nb_async_waits = 0
+-        self.async_cond = threading.Condition()
++        self.async_cond = threading.Condition(threading.Lock())
+         self.async_calls = []
+ 
+     def add_thread(self, thread):
+
+
+
+From tasklets-svn at berlios.de  Wed Sep  7 00:54:26 2005
+From: tasklets-svn at berlios.de (antoine)
+Date: Wed, 7 Sep 2005 00:54:26 +0200
+Subject: [softlets-svn] trunk/softlets (core.py)
+Message-ID: <200509062254.j86MsQX4024677@sheep.berlios.de>
+
+    Date: Wednesday, September 7, 2005 @ 00:54:24
+  Author: antoine
+Revision: 34
+
+comments
+
+Modified:
+  trunk/softlets/core.py
+
+Modified: trunk/softlets/core.py
+===================================================================
+--- trunk/softlets/core.py	2005-09-06 22:49:50 UTC (rev 33)
++++ trunk/softlets/core.py	2005-09-06 22:54:24 UTC (rev 34)
+@@ -354,6 +354,7 @@
+         self.async_calls = []
+ 
+     def add_thread(self, thread):
++        # Called in-thread
+         wait_object = Ready()
+         wait_object.add_waiter(thread)
+         thread.waiting_on = wait_object
+@@ -362,6 +363,7 @@
+             self.nb_daemons += 1
+ 
+     def remove_thread(self, thread):
++        # Called in-thread
+         self.threads.remove(thread)
+         if thread.daemon:
+             self.nb_daemons -= 1
+
+
+

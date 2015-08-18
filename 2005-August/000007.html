@@ -1,0 +1,493 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk (4 files)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-August/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%284%20files%29&In-Reply-To=%3C200508202357.j7KNvcSw004561%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000006.html">
+   <LINK REL="Next"  HREF="000008.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk (4 files)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%284%20files%29&In-Reply-To=%3C200508202357.j7KNvcSw004561%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk (4 files)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Aug 21 01:57:38 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000006.html">[softlets-svn] trunk/softlets (timer.py)
+</A></li>
+        <LI>Next message: <A HREF="000008.html">[softlets-svn] trunk/softlets (timethread.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7">[ date ]</a>
+              <a href="thread.html#7">[ thread ]</a>
+              <a href="subject.html#7">[ subject ]</a>
+              <a href="author.html#7">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, August 21, 2005 @ 01:57:18
+  Author: antoine
+Revision: 22
+
+crude timer implementation (busy wait in main loop) - to be modified
++ inverse operator for waitobjects
+
+Added:
+  trunk/examples/ex7.py
+Modified:
+  trunk/softlets/__init__.py
+  trunk/softlets/core.py
+  trunk/softlets/timer.py
+
+Added: trunk/examples/ex7.py
+===================================================================
+--- trunk/examples/ex7.py	2005-08-15 00:44:35 UTC (rev 21)
++++ trunk/examples/ex7.py	2005-08-20 23:57:18 UTC (rev 22)
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python
++
++try:
++    import softlets
++except ImportError:
++    import _autopath, softlets
++
++import sys
++from softlets.timer import Timer
++
++nb_threads = len(sys.argv) &gt; 1 and int(sys.argv[1]) or 10
++step = 0.1
++
++def thread(name, delay):
++    print &quot;Thread %s: waiting for %s s.&quot; % (name, str(delay))
++    yield Timer(delay)
++    print &quot;Thread %s: finished&quot; % name
++
++for i in range(nb_threads):
++    name = chr(ord('A') + (i&amp;15)) + str(i&gt;&gt;4)
++    softlets.Softlet(thread(name, (nb_threads - i) * step))
++
++softlets.main_loop()
+
+
+Property changes on: trunk/examples/ex7.py
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Modified: trunk/softlets/__init__.py
+===================================================================
+--- trunk/softlets/__init__.py	2005-08-15 00:44:35 UTC (rev 21)
++++ trunk/softlets/__init__.py	2005-08-20 23:57:18 UTC (rev 22)
+@@ -3,3 +3,4 @@
+ 
+ from softlets.core import *
+ from softlets.queue import *
++from softlets.timer import *
+
+Modified: trunk/softlets/core.py
+===================================================================
+--- trunk/softlets/core.py	2005-08-15 00:44:35 UTC (rev 21)
++++ trunk/softlets/core.py	2005-08-20 23:57:18 UTC (rev 22)
+@@ -23,21 +23,38 @@
+     return wrapper
+ 
+ #
+-# For future use, when we will handle multiple switchers
+-# in different system (preemptive) threads
++# To be used when other threads have to interact with
++# a switcher thread.
+ #
+ _lock = threading.Lock()
+ 
+-def _protected(func, lock=_lock):
+-    def f(*args, **kargs):
+-        lock.acquire()
+-        func(*args, **kargs)
+-        lock.release()
+-    return f
++def _protect(func, lock=None):
++    lock = lock or _lock
++    try:
++        func.__unprotected
++    except AttributeError:
++        def wrapper(*args, **kargs):
++            lock.acquire()
++            try:
++                return func(*args, **kargs)
++            finally:
++                lock.release()
++        wrapper.__unprotected = func
++        return wrapper
++    else:
++        return func
+ 
+-def _unprotected(func):
+-    return func
++def _unprotect(func):
++    try:
++        return func.__unprotected
++    except AttributeError:
++        return func
+ 
++class NoLock(object):
++    def acquire(self):
++        pass
++    def release(self):
++        pass
+ 
+ #
+ # Different kinds of objects providing a simple synchronization scheme
+@@ -54,7 +71,15 @@
+         self.ready = False
+         self.readiness_callbacks = []
+         self.armed = False
++        self.is_async = False
+ 
++    def protect(self, lock=None):
++        lock = lock or _lock
++        self.get_waiter = _protect(self.get_waiter)
++        self.add_waiter = _protect(self.add_waiter)
++        self.set_ready = _protect(self.set_ready)
++        self.notify_readiness = _protect(self.notify_readiness)
++
+     def arm(self):
+         &quot;&quot;&quot;
+         Can be overriden if some specific actions need to
+@@ -76,6 +101,8 @@
+         if not q:
+             del self.waiters[switcher]
+             switcher.remove_ready_object(self)
++            if self.is_async:
++                switcher.remove_async_wait(self)
+         return waiter
+ 
+     def add_waiter(self, waiter):
+@@ -92,6 +119,8 @@
+             self.waiters[switcher] = deque([waiter])
+             if self.ready:
+                 switcher.add_ready_object(self)
++            if self.is_async:
++                switcher.add_async_wait(self)
+ 
+     def set_ready(self, ready):
+         &quot;&quot;&quot;
+@@ -133,7 +162,10 @@
+     def __rand__(self, b):
+         return self.__and__(b)
+ 
++    def __invert__(self):
++        return LogicalNot(self)
+ 
++
+ class _Ready(WaitObject):
+     def __init__(self):
+         WaitObject.__init__(self)
+@@ -143,6 +175,26 @@
+ Ready = _singleton(_Ready)
+ 
+ 
++class LogicalNot(WaitObject):
++    &quot;&quot;&quot;
++    Logical negation of a WaitObject.
++    This class is invoked with the &quot;~&quot; operator.
++    &quot;&quot;&quot;
++    def __init__(self, obj):
++        WaitObject.__init__(self)
++        self.obj = obj
++        self.ready = True
++
++    def arm(self):
++        self.obj.notify_readiness(self.on_object_ready)
++
++    def on_object_ready(self, obj, ready):
++        self.set_ready(not ready)
++
++    def __invert__(self):
++        return self.obj
++
++
+ class MultipleWaitObject(WaitObject):
+     &quot;&quot;&quot;
+     Base class for combinations of several WaitObjects.
+@@ -176,9 +228,9 @@
+             except StopIteration:
+                 break
+             else:
+-#                 self.update_readiness()
+                 yield obj
+ 
++
+ class LogicalOr(MultipleWaitObject):
+     &quot;&quot;&quot;
+     Logical OR between several WaitObjects.
+@@ -234,17 +286,20 @@
+     (for now and by default, there is only one switcher)
+     &quot;&quot;&quot;
+ 
+-    def __init__(self, func=None, standalone=False):
++    def __init__(self, func=None, standalone=False, daemon=False):
+         &quot;&quot;&quot;
+         Create Softlet from given generator, or from
+         the overriden run() method if &quot;func&quot; is not specified.
+         If &quot;standalone&quot; is True, Softlet won't be killed
+         when parent terminates.
++        If &quot;daemon&quot; is True, Softlet is automatically killed
++        when no non-daemon Softlets are left.
+         &quot;&quot;&quot;
+         WaitObject.__init__(self)
+         self.standalone = standalone
+         self.switcher = current_switcher()
+         self.children = set()
++        self.daemon = daemon
+         if not standalone:
+             self.parent = self.switcher.current_thread
+             if self.parent:
+@@ -274,9 +329,6 @@
+             else:
+                 child.terminate()
+ 
+-    def wait_on(self, wait_object):
+-        wait_object.add_waiter(self)
+-        self.waiting_on = wait_object
+ 
+ #
+ # Main loop
+@@ -295,6 +347,8 @@
+         self.threads = set()
+         self.ready_objects = set()
+         self.nb_switches = 0
++        self.nb_daemons = 0
++        self.nb_async_waits = 0
+         self.current_thread = None
+ 
+     def add_thread(self, thread):
+@@ -302,15 +356,27 @@
+         wait_object.add_waiter(thread)
+         thread.waiting_on = wait_object
+         self.threads.add(thread)
++        if thread.daemon:
++            self.nb_daemons += 1
+ 
+     def remove_thread(self, thread):
+         self.threads.remove(thread)
++        if thread.daemon:
++            self.nb_daemons -= 1
+ 
++    def add_async_wait(self, wait_object):
++        self.nb_async_waits += 1
++
++    def remove_async_wait(self, wait_object):
++        self.nb_async_waits -= 1
++
+     def set_ready(self, wait_object, ready):
+         if ready:
+             self.ready_objects.add(wait_object)
+         else:
+             self.ready_objects.discard(wait_object)
++            if not self.ready_objects and not self.nb_async_waits:
++                raise Exception(&quot;softlets starved&quot;)
+ 
+     def add_ready_object(self, wait_object):
+         self.ready_objects.add(wait_object)
+@@ -320,31 +386,29 @@
+ 
+     def run(self):
+ #         _lock.acquire()
+-        while self.threads:
+-            if not self.ready_objects:
+-                raise Exception(&quot;softlets starved&quot;)
++        while len(self.threads) &gt; self.nb_daemons:
+             for r in self.ready_objects:
++#                 _lock.release()
+                 thread = r.get_waiter(self)
+-                if thread.finished:
+-                    continue
++                if thread is None or thread.finished:
++                    break
+                 self.nb_switches += 1
+                 try:
+                     self.current_thread = thread
+-#                     _lock.release()
+                     wait_object = thread.runner.next()
+                 except Exception, e:
+-#                     _lock.acquire()
+                     self.current_thread = None
+                     thread.terminate()
+                     if not isinstance(e, StopIteration):
+                         raise
+                 else:
+-#                     _lock.acquire()
+                     self.current_thread = None
+                     wait_object.add_waiter(thread)
+                     thread.waiting_on = wait_object
+                 break
+-#         _lock.release()
++#             else:
++#                 _lock.release()
++#             _lock.acquire()
+ 
+ #
+ # Functions
+
+Modified: trunk/softlets/timer.py
+===================================================================
+--- trunk/softlets/timer.py	2005-08-15 00:44:35 UTC (rev 21)
++++ trunk/softlets/timer.py	2005-08-20 23:57:18 UTC (rev 22)
+@@ -1,89 +1,42 @@
+ 
+-import time
+-import threading
+-from heapq import heappush, heappop, heapify
+-from operator import itemgetter
++from softlets.core import WaitObject
++from softlets.timethread import TimeThread
+ 
+-from softlets.core import WaitObject, _singleton
++__all__ = ['Timer']
+ 
+-def _p(s):
+-    def p():
+-        print s
+-    return p
++class Timer(WaitObject):
++    &quot;&quot;&quot;
++    This object becomes ready when a certain delay has expired.
++    &quot;&quot;&quot;
++    timethread = TimeThread()
++    timethread_started = False
++    lock = timethread.get_lock()
+ 
+-def _q(s):
+-    def q():
+-        if not s % 100:
+-            print s
+-    return q
++    def __init__(self, delay):
++        WaitObject.__init__(self)
++        self.delay = delay
++        self.callback = None
++        self.is_async = True
++        self.protect()
++        if not self.timethread_started:
++            self.timethread.start()
++            self.timethread_started = True
++        self.reschedule()
+ 
+-class _Callback(tuple):
+-    def __new__(cls, timestamp, func):
+-        self = tuple.__new__(cls, (timestamp, func))
+-        return self
+-    timestamp = property(itemgetter(0))
+-    func = property(itemgetter(1))
+-
+-class _TimeThread(threading.Thread):
+-    def __init__(self):
+-        threading.Thread.__init__(self)
+-        self.callbacks = []
+-        self.interrupt = threading.Condition()
+-        self.running = False
+-        self.setDaemon(True)
+-
+-    def add_callback(self, delay, func):
+-        timestamp = time.time() + delay
+-        callback = _Callback(timestamp, func)
++    def reschedule(self):
++        # take the lock to ensure the callback doesn't
++        # expire in the meantime
++        self.lock.acquire()
+         try:
+-            self.interrupt.acquire()
+-            heappush(self.callbacks, callback)
+-            if self.callbacks[0] is callback:
+-                self.interrupt.notify()
++            if self.callback:
++                self.timethread.remove_timer(self.callback)
++            self.set_ready(False)
++            self.callback = self.timethread.add_timer(self.delay, self.on_delay_expired, keep_lock=True)
+         finally:
+-            self.interrupt.release()
+-        return callback
++            self.lock.release()
+ 
+-    def remove_callback(self, callback):
+-        try:
+-            self.interrupt.acquire()
+-            if self.callbacks[0] is callback:
+-                self.interrupt.notify()
+-            self.callbacks.remove(callback)
+-            heapify(self.callbacks)
+-        finally:
+-            self.interrupt.release()
++    def on_delay_expired(self):
++        # the timethread has already taken the lock for us
++        self.set_ready(True)
++        self.callback = None
+ 
+-    def finish(self):
+-        self.running = False
+-        self.interrupt.acquire()
+-        self.interrupt.notify()
+-        self.interrupt.release()
+-
+-    def run(self):
+-        self.running = True
+-        try:
+-            self.interrupt.acquire()
+-            while self.running:
+-                if not self.callbacks:
+-                    self.interrupt.wait()
+-                    continue
+-                cb = self.callbacks[0]
+-                timeout = cb.timestamp - time.time()
+-                if timeout &gt; 0:
+-                    r = self.interrupt.wait(timeout)
+-                    # If the next callback has changed at return, it means we
+-                    # have been interrupted by the main thread
+-                    if not self.callbacks or cb != self.callbacks[0]:
+-                        continue
+-                heappop(self.callbacks)
+-                # Release the lock in case the func() wants to
+-                # add/remove other callbacks
+-                self.interrupt.release()
+-                cb.func()
+-                self.interrupt.acquire()
+-        finally:
+-            self.interrupt.release()
+-
+-
+-TimeThread = _singleton(_TimeThread)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000006.html">[softlets-svn] trunk/softlets (timer.py)
+</A></li>
+	<LI>Next message: <A HREF="000008.html">[softlets-svn] trunk/softlets (timethread.py)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7">[ date ]</a>
+              <a href="thread.html#7">[ thread ]</a>
+              <a href="subject.html#7">[ subject ]</a>
+              <a href="author.html#7">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

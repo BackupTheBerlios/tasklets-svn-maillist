@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk/softlets (core/waitobject.py popen.py)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28core/waitobject.py%20popen.py%29&In-Reply-To=%3C200510021834.j92IYXDE008528%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000023.html">
+   <LINK REL="Next"  HREF="000025.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk/softlets (core/waitobject.py popen.py)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk/softlets%20%28core/waitobject.py%20popen.py%29&In-Reply-To=%3C200510021834.j92IYXDE008528%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk/softlets (core/waitobject.py popen.py)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct  2 20:34:33 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000023.html">[softlets-svn] trunk/softlets (popen.py)
+</A></li>
+        <LI>Next message: <A HREF="000025.html">[softlets-svn] trunk/softlets (3 files)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24">[ date ]</a>
+              <a href="thread.html#24">[ thread ]</a>
+              <a href="subject.html#24">[ subject ]</a>
+              <a href="author.html#24">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 2, 2005 @ 20:34:33
+  Author: antoine
+Revision: 41
+
+naming, comments
+
+Modified:
+  trunk/softlets/core/waitobject.py
+  trunk/softlets/popen.py
+
+Modified: trunk/softlets/core/waitobject.py
+===================================================================
+--- trunk/softlets/core/waitobject.py	2005-10-02 18:23:26 UTC (rev 40)
++++ trunk/softlets/core/waitobject.py	2005-10-02 18:34:33 UTC (rev 41)
+@@ -15,10 +15,10 @@
+ 
+     def __init__(self):
+         # Waiters are keyed by their respective switcher
+-        self.waiters = {}
++        self._waiters = {}
++        self._readiness_callbacks = []
++        self._armed = False
+         self.ready = False
+-        self.readiness_callbacks = []
+-        self.armed = False
+         self.is_async = False
+ 
+     def protect(self, lock=None):
+@@ -42,12 +42,12 @@
+         depending on the switcher.
+         &quot;&quot;&quot;
+         try:
+-            q = self.waiters[switcher]
++            q = self._waiters[switcher]
+         except KeyError:
+             return None
+         waiter = q.popleft()
+         if not q:
+-            del self.waiters[switcher]
++            del self._waiters[switcher]
+             switcher.remove_ready_object(self)
+             if self.is_async:
+                 switcher.remove_async_wait(self)
+@@ -57,14 +57,14 @@
+         &quot;&quot;&quot;
+         Add a softlet waiting upon this WaitObject.
+         &quot;&quot;&quot;
+-        if not self.armed:
++        if not self._armed:
+             self.arm()
+-            self.armed = True
++            self._armed = True
+         switcher = waiter.switcher
+         try:
+-            self.waiters[switcher].append(waiter)
++            self._waiters[switcher].append(waiter)
+         except KeyError:
+-            self.waiters[switcher] = deque([waiter])
++            self._waiters[switcher] = deque([waiter])
+             if self.ready:
+                 switcher.add_ready_object(self)
+             if self.is_async:
+@@ -77,9 +77,9 @@
+         &quot;&quot;&quot;
+         if ready != self.ready:
+             self.ready = ready
+-            for callback in self.readiness_callbacks:
++            for callback in self._readiness_callbacks:
+                 callback(self, ready)
+-            for switcher in self.waiters:
++            for switcher in self._waiters:
+                 switcher.set_ready(self, ready)
+ 
+     def notify_readiness(self, callback):
+@@ -88,7 +88,7 @@
+         The function will be called back with two arguments:
+         the WaitObject, and its ready state (True or False).
+         &quot;&quot;&quot;
+-        self.readiness_callbacks.append(callback)
++        self._readiness_callbacks.append(callback)
+         if self.ready:
+             callback(self, True)
+ 
+
+Modified: trunk/softlets/popen.py
+===================================================================
+--- trunk/softlets/popen.py	2005-10-02 18:23:26 UTC (rev 40)
++++ trunk/softlets/popen.py	2005-10-02 18:34:33 UTC (rev 41)
+@@ -17,6 +17,9 @@
+     The following properties are defined:
+     - popen: the underlying subprocess.Popen object
+     - retcode: the return code of the subprocess (if finished)
++
++    The implementation is not optimal, as a helper thread is created
++    for each subprocess.
+     &quot;&quot;&quot;
+     def __init__(self, *args, **kargs):
+         WaitObject.__init__(self)
+@@ -24,12 +27,17 @@
+         self.protect()
+         self.popen = subprocess.Popen(*args, **kargs)
+         self.finished = False
++        # We create a thread for each subprocess, because Python
++        # has no portable primitive to wait asynchronously for
++        # multiple processes.
++        # XXX: try a poll/sleep loop instead
+         self._thread = Thread(target=self._blocking_wait,
+             name=&quot;softlets.popen helper thread&quot;)
+         self._thread.setDaemon(True)
+         self._thread.start()
+ 
+     def _blocking_wait(self):
++        print &quot;** blocking_wait&quot;
+         self.retcode = self.popen.wait()
+         self._on_subprocess_exited()
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000023.html">[softlets-svn] trunk/softlets (popen.py)
+</A></li>
+	<LI>Next message: <A HREF="000025.html">[softlets-svn] trunk/softlets (3 files)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24">[ date ]</a>
+              <a href="thread.html#24">[ thread ]</a>
+              <a href="subject.html#24">[ subject ]</a>
+              <a href="author.html#24">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>

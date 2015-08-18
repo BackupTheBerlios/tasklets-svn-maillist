@@ -1,0 +1,302 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [softlets-svn] trunk (11 files)
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/tasklets-svn/2005-October/index.html" >
+   <LINK REL="made" HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%2811%20files%29&In-Reply-To=%3C200510021950.j92Jo4xB014292%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000025.html">
+   <LINK REL="Next"  HREF="000027.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[softlets-svn] trunk (11 files)</H1>
+    <B>antoine</B> 
+    <A HREF="mailto:tasklets-svn%40lists.berlios.de?Subject=Re%3A%20%5Bsoftlets-svn%5D%20trunk%20%2811%20files%29&In-Reply-To=%3C200510021950.j92Jo4xB014292%40sheep.berlios.de%3E"
+       TITLE="[softlets-svn] trunk (11 files)">tasklets-svn at berlios.de
+       </A><BR>
+    <I>Sun Oct  2 21:50:04 CEST 2005</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000025.html">[softlets-svn] trunk/softlets (3 files)
+</A></li>
+        <LI>Next message: <A HREF="000027.html">[softlets-svn] trunk (5 files)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26">[ date ]</a>
+              <a href="thread.html#26">[ thread ]</a>
+              <a href="subject.html#26">[ subject ]</a>
+              <a href="author.html#26">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>    Date: Sunday, October 2, 2005 @ 21:50:04
+  Author: antoine
+Revision: 43
+
+make default imports narrower
+
+Modified:
+  trunk/examples/ex1.py
+  trunk/examples/ex2.py
+  trunk/examples/ex3.py
+  trunk/examples/ex4.py
+  trunk/examples/ex5.py
+  trunk/examples/ex6.py
+  trunk/examples/ex7.py
+  trunk/examples/popen1.py
+  trunk/examples/stress1.py
+  trunk/examples/stress2.py
+  trunk/softlets/__init__.py
+
+Modified: trunk/examples/ex1.py
+===================================================================
+--- trunk/examples/ex1.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex1.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -5,8 +5,11 @@
+ except ImportError:
+     import _autopath, softlets
+ 
+-q1 = softlets.Queue()
+-q2 = softlets.Queue()
++from softlets.queue import Queue
++
++
++q1 = Queue()
++q2 = Queue()
+ iterations = 3
+ 
+ def thread_a(n, qin, qout):
+
+Modified: trunk/examples/ex2.py
+===================================================================
+--- trunk/examples/ex2.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex2.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -5,7 +5,10 @@
+ except ImportError:
+     import _autopath, softlets
+ 
+-q = softlets.Queue()
++from softlets.queue import Queue
++from softlets.timer import Timer
++
++q = Queue()
+ iterations = 4
+ 
+ print &quot;Producer/consumer running in lock step&quot;
+@@ -18,7 +21,7 @@
+ 
+ def consumer(n, qin):
+     for i in range(n):
+-        yield softlets.Timer(0.1)
++        yield Timer(0.1)
+         yield qin
+         print &quot;Thread B got '%s'&quot; % qin.get()
+ 
+
+Modified: trunk/examples/ex3.py
+===================================================================
+--- trunk/examples/ex3.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex3.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -7,9 +7,13 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.queue import Queue
++from softlets.timer import Timer
++
++
+ def subthread(name, delay):
+     print &quot;begin subthread %s&quot; % name
+-    yield softlets.Timer(delay)
++    yield Timer(delay)
+     print &quot;end subthread %s&quot; % name
+ 
+ def main_thread():
+
+Modified: trunk/examples/ex4.py
+===================================================================
+--- trunk/examples/ex4.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex4.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -6,6 +6,9 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.queue import Queue
++
++
+ def sub_thread(queue, name, count):
+     print &quot;begin subthread %s&quot; % name
+     for i in range(count):
+@@ -28,7 +31,7 @@
+ iterations = 3
+ queues = []
+ for i in range(nb_queues):
+-    q = softlets.Queue()
++    q = Queue()
+     softlets.Softlet(sub_thread(q, chr(ord('A') + i), iterations))
+     queues.append(q)
+ softlets.Softlet(or_thread(queues, iterations))
+
+Modified: trunk/examples/ex5.py
+===================================================================
+--- trunk/examples/ex5.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex5.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -6,6 +6,9 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.queue import Queue
++
++
+ def sub_thread(queue, name, count):
+     print &quot;begin subthread %s&quot; % name
+     for i in range(count):
+@@ -29,7 +32,7 @@
+ iterations = 2
+ queues = []
+ for i in range(nb_queues):
+-    q = softlets.Queue()
++    q = Queue()
+     softlets.Softlet(sub_thread(q, chr(ord('A') + i), iterations))
+     queues.append(q)
+ softlets.Softlet(and_thread(queues, iterations))
+
+Modified: trunk/examples/ex6.py
+===================================================================
+--- trunk/examples/ex6.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex6.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -7,16 +7,19 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.timer import Timer
++
++
+ def subthread(name):
+     print &quot;begin subthread %s&quot; % name
+-    yield softlets.Timer(2)
++    yield Timer(2)
+     print &quot;** error: we should never get here&quot;
+ 
+ def main_thread():
+     print &quot;main thread will kill subthreads on ending&quot;
+     ta = softlets.Softlet(subthread('A'))
+     tb = softlets.Softlet(subthread('B'))
+-    yield softlets.Timer(1)
++    yield Timer(1)
+     print &quot;end main thread&quot;
+ 
+ softlets.Softlet(main_thread())
+
+Modified: trunk/examples/ex7.py
+===================================================================
+--- trunk/examples/ex7.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/ex7.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -1,13 +1,14 @@
+ #!/usr/bin/env python
+ 
++import sys
+ try:
+     import softlets
+ except ImportError:
+     import _autopath, softlets
+ 
+-import sys
+ from softlets.timer import Timer
+ 
++
+ nb_threads = len(sys.argv) &gt; 1 and int(sys.argv[1]) or 10
+ step = 0.1
+ 
+
+Modified: trunk/examples/popen1.py
+===================================================================
+--- trunk/examples/popen1.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/popen1.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -8,6 +8,7 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.timer import Timer
+ from softlets.popen import Popen, PIPE
+ 
+ tick = 0.3
+
+Modified: trunk/examples/stress1.py
+===================================================================
+--- trunk/examples/stress1.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/stress1.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -6,6 +6,7 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++
+ # import psyco
+ # psyco.full()
+ 
+
+Modified: trunk/examples/stress2.py
+===================================================================
+--- trunk/examples/stress2.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/examples/stress2.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -7,6 +7,9 @@
+ except ImportError:
+     import _autopath, softlets
+ 
++from softlets.timer import Timer
++
++
+ nb_threads = len(sys.argv) &gt; 1 and int(sys.argv[1]) or 2000
+ nb_sleeps = 0
+ nb_simult = 0
+@@ -17,7 +20,7 @@
+ def sleeping_thread():
+     global nb_simult, nb_sleeps, max_simult
+     nb_simult += 1
+-    yield softlets.Timer(max(0.0, target - time.time()))
++    yield Timer(max(0.0, target - time.time()))
+     max_simult = max(max_simult, nb_simult)
+     nb_simult -= 1
+     nb_sleeps += 1
+
+Modified: trunk/softlets/__init__.py
+===================================================================
+--- trunk/softlets/__init__.py	2005-10-02 19:24:32 UTC (rev 42)
++++ trunk/softlets/__init__.py	2005-10-02 19:50:04 UTC (rev 43)
+@@ -4,5 +4,3 @@
+ &quot;&quot;&quot;
+ 
+ from softlets.core import *
+-from softlets.queue import *
+-from softlets.timer import *
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000025.html">[softlets-svn] trunk/softlets (3 files)
+</A></li>
+	<LI>Next message: <A HREF="000027.html">[softlets-svn] trunk (5 files)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26">[ date ]</a>
+              <a href="thread.html#26">[ thread ]</a>
+              <a href="subject.html#26">[ subject ]</a>
+              <a href="author.html#26">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/tasklets-svn">More information about the Tasklets-svn
+mailing list</a><br>
+</body></html>
